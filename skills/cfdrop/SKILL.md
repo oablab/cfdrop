@@ -29,7 +29,9 @@ return a live `workers.dev` URL. Sites live ~60 minutes unless claimed.
    **HTML path (only for app-like UIs):** stat-tile dashboards, badge-heavy indexes
    with tappable cards, and copy-to-clipboard buttons need templated HTML. (Plain
    diagrams no longer justify HTML — use mermaid on the markdown path.) Inline the
-   CSS from `assets/base.css` (this skill dir) into each page's `<style>`. Structure:
+   CSS from `assets/base.css` (this skill dir) into each page's `<style>`. Every HTML
+   page must include `<meta name="viewport" content="width=device-width, initial-scale=1">`
+   in `<head>` so mobile breakpoints use the device width. Structure:
    - `index.html` — header, 2×2 stat tiles (grid), then one full-width tappable card
      per item linking to `/<id>`
    - `<id>.html` — one page per item: header card with "← All items" back link and an
@@ -60,31 +62,58 @@ return a live `workers.dev` URL. Sites live ~60 minutes unless claimed.
 - Dark theme tokens, badges, and all of the above are already in `assets/base.css` —
   don't rewrite it, inline it.
 - **Every `<textarea>` must have a working copy button.** Wrap each one in
-  `.textarea-copy`, place a `.copybtn` inside the wrapper, and copy the textarea's
-  current `.value` (not `innerText`). This applies to readonly output and editable
-  textareas so user edits are copied too. Use unique labels when multiple textareas
-  appear on one page, and include this delegated handler once per page:
+  `.textarea-copy`, place a `.copybtn` and an `aria-live` status inside the wrapper,
+  and copy the textarea's current `.value` (not `innerText`). This applies to readonly
+  output and editable textareas so user edits are copied too. Use unique accessible
+  labels when multiple textareas appear on one page, and include this delegated handler
+  once per page:
 
   ```html
   <div class="textarea-copy">
     <button type="button" class="copybtn" aria-label="Copy textarea contents">Copy</button>
+    <span class="copy-status" role="status" aria-live="polite"></span>
     <textarea>Text to copy</textarea>
   </div>
   <script>
   document.addEventListener('click', async (event) => {
     const button = event.target.closest('.textarea-copy .copybtn');
-    if (!button) return;
-    const textarea = button.closest('.textarea-copy').querySelector('textarea');
-    const label = button.textContent;
+    if (!button || button.dataset.copying === 'true') return;
+
+    const wrapper = button.closest('.textarea-copy');
+    const textarea = wrapper.querySelector('textarea');
+    const status = wrapper.querySelector('.copy-status');
+    const label = button.dataset.copyLabel || button.textContent;
+    const ariaLabel = button.dataset.copyAriaLabel ||
+      button.getAttribute('aria-label') || label;
+    button.dataset.copyLabel = label;
+    button.dataset.copyAriaLabel = ariaLabel;
+    button.dataset.copying = 'true';
+
+    let copied = false;
     try {
       await navigator.clipboard.writeText(textarea.value);
+      copied = true;
     } catch {
-      textarea.focus();
-      textarea.select();
-      document.execCommand('copy');
+      try {
+        textarea.focus();
+        textarea.select();
+        copied = document.execCommand('copy');
+      } catch {
+        copied = false;
+      }
     }
-    button.textContent = '✓ Copied';
-    setTimeout(() => { button.textContent = label; }, 1500);
+
+    const message = copied ? 'Copied to clipboard' : 'Copy failed';
+    button.textContent = copied ? '✓ Copied' : 'Copy failed';
+    button.setAttribute('aria-label', message);
+    if (status) status.textContent = message;
+    delete button.dataset.copying;
+    clearTimeout(button._copyReset);
+    button._copyReset = setTimeout(() => {
+      button.textContent = label;
+      button.setAttribute('aria-label', ariaLabel);
+      if (status) status.textContent = '';
+    }, 1500);
   });
   </script>
   ```

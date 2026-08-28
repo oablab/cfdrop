@@ -68,12 +68,14 @@ h2 { font-size:.8rem; text-transform:uppercase; letter-spacing:.06em; color:var(
 
 /* copy-to-clipboard blocks */
 .resp, .textarea-copy { position:relative; }
-.copybtn { position:absolute; top:8px; right:8px; z-index:1; min-height:36px; background:var(--line);
-           color:var(--fg); border:1px solid #3a3f50; border-radius:7px; padding:6px 12px;
-           font:600 .75rem/1 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+.copybtn { position:absolute; top:8px; right:8px; z-index:1; min-height:44px; background:var(--line);
+           color:var(--fg); border:1px solid #3a3f50; border-radius:7px; padding:8px 12px;
+           font:600 .875rem/1 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
            cursor:pointer; touch-action:manipulation; }
 .copybtn:focus-visible { outline:2px solid var(--blue); outline-offset:2px; }
+.copy-status { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden;
+           clip:rect(0,0,0,0); white-space:nowrap; border:0; }
 .textarea-copy textarea { display:block; width:100%; min-height:9rem; resize:vertical; background:var(--card);
-           color:var(--fg); border:1px solid var(--line); border-radius:12px; padding:54px 14px 14px;
-           font:.85rem/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; overflow-wrap:anywhere; }
+           color:var(--fg); border:1px solid var(--line); border-radius:12px; padding:62px 14px 14px;
+           font:1rem/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; overflow-wrap:anywhere; }
 .textarea-copy textarea:focus { border-color:var(--blue); outline:1px solid var(--blue); }
