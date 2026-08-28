@@ -232,25 +232,44 @@ impl CfClient {
         completion.context("upload finished but no completion token was returned")
     }
 
-    /// Deploy an assets-only Worker using the completion JWT.
+    /// Deploy the Worker using the completion JWT. Without `auth`, deploys an
+    /// assets-only Worker. With `auth` (base64 of "user:pass"), deploys a
+    /// module Worker that enforces HTTP Basic Auth in front of the assets
+    /// (`run_worker_first` so every request hits the guard).
     pub fn deploy_worker(
         &self,
         account: &TempAccount,
         script_name: &str,
         completion_jwt: &str,
+        auth: Option<&str>,
     ) -> Result<()> {
-        let metadata = json!({
-            "assets": {
-                "jwt": completion_jwt,
-                "config": {
-                    "html_handling": "auto-trailing-slash",
-                    "not_found_handling": "404-page"
-                }
-            },
+        let mut assets_config = json!({
+            "html_handling": "auto-trailing-slash",
+            "not_found_handling": "404-page"
+        });
+        let mut metadata = json!({
+            "assets": { "jwt": completion_jwt },
             "compatibility_date": "2025-01-01",
         });
 
-        let form = multipart::Form::new().part(
+        let mut form = multipart::Form::new();
+
+        if let Some(token) = auth {
+            assets_config["run_worker_first"] = json!(true);
+            metadata["main_module"] = json!("worker.mjs");
+            metadata["bindings"] = json!([{ "type": "assets", "name": "ASSETS" }]);
+            let script = auth_worker_script(token);
+            form = form.part(
+                "worker.mjs",
+                multipart::Part::text(script)
+                    .file_name("worker.mjs")
+                    .mime_str("application/javascript+module")
+                    .context("setting worker module mime")?,
+            );
+        }
+        metadata["assets"]["config"] = assets_config;
+
+        form = form.part(
             "metadata",
             multipart::Part::text(metadata.to_string())
                 .mime_str("application/json")
@@ -311,5 +330,40 @@ impl CfClient {
         let r = unwrap_envelope(resp, "subdomain lookup")?;
         r.subdomain
             .context("account has no workers.dev subdomain registered")
+    }
+}
+
+/// Generate the Basic Auth guard Worker module. `token` is base64("user:pass")
+/// (base64 alphabet only, safe to embed in a JS string literal).
+fn auth_worker_script(token: &str) -> String {
+    format!(
+        r#"const EXPECTED = "Basic {token}";
+export default {{
+  async fetch(request, env) {{
+    const got = request.headers.get("Authorization") || "";
+    if (got.length !== EXPECTED.length || got !== EXPECTED) {{
+      return new Response("Unauthorized", {{
+        status: 401,
+        headers: {{ "WWW-Authenticate": 'Basic realm="cftmp", charset="UTF-8"' }},
+      }});
+    }}
+    return env.ASSETS.fetch(request);
+  }},
+}};
+"#
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::auth_worker_script;
+
+    #[test]
+    fn auth_script_embeds_token_and_falls_through_to_assets() {
+        let s = auth_worker_script("dXNlcjpwYXNz");
+        assert!(s.contains(r#"const EXPECTED = "Basic dXNlcjpwYXNz";"#));
+        assert!(s.contains("env.ASSETS.fetch(request)"));
+        assert!(s.contains("WWW-Authenticate"));
+        assert!(s.contains("status: 401"));
     }
 }

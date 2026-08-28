@@ -4,6 +4,7 @@ mod pow;
 mod state;
 
 use anyhow::{bail, Context, Result};
+use base64::Engine;
 use chrono::{Duration, Utc};
 use clap::{Parser, Subcommand};
 use std::io::Write;
@@ -32,6 +33,9 @@ enum Command {
         /// Force provisioning a fresh temporary account even if a cached one is still valid
         #[arg(long)]
         fresh: bool,
+        /// Protect the site with HTTP Basic Auth, format "user:pass"
+        #[arg(long, value_name = "USER:PASS")]
+        auth: Option<String>,
     },
     /// Show the cached temporary account (claim URL, expiry)
     Status,
@@ -54,7 +58,8 @@ fn run() -> Result<()> {
             name,
             yes,
             fresh,
-        } => deploy(directory, name, yes, fresh),
+            auth,
+        } => deploy(directory, name, yes, fresh, auth),
         Command::Status => status(),
         Command::Logout => {
             let path = state::state_path()?;
@@ -96,7 +101,27 @@ fn confirm_terms() -> Result<bool> {
     Ok(matches!(line.trim().to_lowercase().as_str(), "y" | "yes"))
 }
 
-fn deploy(directory: PathBuf, name: Option<String>, yes: bool, fresh: bool) -> Result<()> {
+fn deploy(
+    directory: PathBuf,
+    name: Option<String>,
+    yes: bool,
+    fresh: bool,
+    auth: Option<String>,
+) -> Result<()> {
+    // Validate and encode the Basic Auth credential up front
+    let auth_token = match &auth {
+        Some(cred) => {
+            let (user, pass) = cred
+                .split_once(':')
+                .context("--auth must be in the form user:pass")?;
+            if user.is_empty() || pass.is_empty() {
+                bail!("--auth must be in the form user:pass (both non-empty)");
+            }
+            Some(base64::engine::general_purpose::STANDARD.encode(cred))
+        }
+        None => None,
+    };
+
     let directory = directory
         .canonicalize()
         .with_context(|| format!("directory not found: {}", directory.display()))?;
@@ -149,8 +174,8 @@ fn deploy(directory: PathBuf, name: Option<String>, yes: bool, fresh: bool) -> R
     let session = client.start_upload_session(&account, &script_name, &entries)?;
     let completion_jwt = client.upload_assets(&account, &session, &entries)?;
 
-    // 4. Deploy the assets-only Worker and enable workers.dev
-    client.deploy_worker(&account, &script_name, &completion_jwt)?;
+    // 4. Deploy the Worker (with optional Basic Auth guard) and enable workers.dev
+    client.deploy_worker(&account, &script_name, &completion_jwt, auth_token.as_deref())?;
     client.enable_workers_dev(&account, &script_name)?;
     let subdomain = client.get_subdomain(&account)?;
 
@@ -159,6 +184,9 @@ fn deploy(directory: PathBuf, name: Option<String>, yes: bool, fresh: bool) -> R
 
     println!();
     println!("✅ Deployed: {url}");
+    if auth_token.is_some() {
+        println!("   Protected with HTTP Basic Auth (--auth).");
+    }
     println!();
     println!("This temporary account expires in ~{minutes_left} minutes.");
     println!("Keep it by claiming: {}", account.claim_url);
