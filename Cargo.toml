@@ -1,6 +1,6 @@
 [package]
 name = "cfdrop"
-version = "0.5.0"
+version = "0.6.0"
 edition = "2021"
 description = "Deploy a directory to a temporary Cloudflare account (no signup) and get a live workers.dev URL"
 license = "MIT"

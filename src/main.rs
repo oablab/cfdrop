@@ -41,6 +41,11 @@ enum Command {
         /// HTML pages (auto-generated index unless index.md exists)
         #[arg(long)]
         md: bool,
+        /// After a successful deploy, push the URL to a cfdrop relay so the
+        /// iPad viewer opens it. Endpoint from CFDROP_NOTIFY (default
+        /// http://192.168.0.176:8788), token from CFDROP_RELAY_TOKEN.
+        #[arg(long)]
+        notify: bool,
     },
     /// Show the cached temporary account (claim URL, expiry)
     Status,
@@ -65,7 +70,8 @@ fn run() -> Result<()> {
             fresh,
             auth,
             md,
-        } => deploy(directory, name, yes, fresh, auth, md),
+            notify,
+        } => deploy(directory, name, yes, fresh, auth, md, notify),
         Command::Status => status(),
         Command::Logout => {
             let path = state::state_path()?;
@@ -114,6 +120,7 @@ fn deploy(
     fresh: bool,
     auth: Option<String>,
     md: bool,
+    notify: bool,
 ) -> Result<()> {
     // Validate and encode the Basic Auth credential up front
     let auth_token = match &auth {
@@ -207,10 +214,37 @@ fn deploy(
     println!();
     println!("This temporary account expires in ~{minutes_left} minutes.");
     println!("Keep it by claiming: {}", account.claim_url);
+    if notify {
+        match notify_relay(&url) {
+            Ok(endpoint) => println!("Pushed URL to relay at {endpoint}."),
+            Err(e) => eprintln!("warning: relay notify failed: {e:#}"),
+        }
+    }
     if let Some(staged) = staging {
         let _ = std::fs::remove_dir_all(staged);
     }
     Ok(())
+}
+
+/// POST the deployed URL to the cfdrop relay (see oablab/cfdrop-app).
+/// Never fatal: the deploy already succeeded.
+fn notify_relay(url: &str) -> Result<String> {
+    let endpoint = std::env::var("CFDROP_NOTIFY")
+        .unwrap_or_else(|_| "http://192.168.0.176:8788".to_string());
+    let token = std::env::var("CFDROP_RELAY_TOKEN")
+        .context("CFDROP_RELAY_TOKEN must be set for --notify")?;
+    let resp = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()?
+        .post(format!("{}/push", endpoint.trim_end_matches('/')))
+        .header("x-relay-token", token)
+        .body(url.to_string())
+        .send()
+        .context("sending push to relay")?;
+    if !resp.status().is_success() {
+        anyhow::bail!("relay returned {}", resp.status());
+    }
+    Ok(endpoint)
 }
 
 fn status() -> Result<()> {
