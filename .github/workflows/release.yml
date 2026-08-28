@@ -1,0 +1,68 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            asset: cftmp-linux-amd64
+          - target: aarch64-unknown-linux-musl
+            asset: cftmp-linux-arm64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cross
+      - name: Test (host)
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: cross test --target ${{ matrix.target }}
+      - name: Build
+        run: cross build --release --target ${{ matrix.target }}
+      - name: Package
+        run: tar -czf ${{ matrix.asset }}.tar.gz -C target/${{ matrix.target }}/release cftmp
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: ${{ matrix.asset }}.tar.gz
+
+  macos:
+    runs-on: oablab-macos
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test and build
+        run: |
+          export PATH="$HOME/.cargo/bin:$PATH"
+          cargo test
+          cargo build --release
+          tar -czf cftmp-macos-arm64.tar.gz -C target/release cftmp
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cftmp-macos-arm64
+          path: cftmp-macos-arm64.tar.gz
+
+  release:
+    needs: [linux, macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/*.tar.gz \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "cftmp $GITHUB_REF_NAME" \
+            --generate-notes
