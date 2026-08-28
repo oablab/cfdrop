@@ -41,9 +41,9 @@ enum Command {
         /// HTML pages (auto-generated index unless index.md exists)
         #[arg(long)]
         md: bool,
-        /// After a successful deploy, push the URL to a cfdrop relay so the
-        /// iPad viewer opens it. Endpoint from CFDROP_NOTIFY (default
-        /// http://192.168.0.176:8788), token from CFDROP_RELAY_TOKEN.
+        /// After a successful deploy, push the URL to a cfdrop relay so a
+        /// paired viewer opens it. Endpoint from CFDROP_NOTIFY, token from
+        /// CFDROP_RELAY_TOKEN.
         #[arg(long)]
         notify: bool,
     },
@@ -270,7 +270,7 @@ fn wait_until_live(url: &str, max: std::time::Duration) -> Result<std::time::Dur
 /// Never fatal: the deploy already succeeded.
 fn notify_relay(url: &str) -> Result<String> {
     let endpoint = std::env::var("CFDROP_NOTIFY")
-        .unwrap_or_else(|_| "http://192.168.0.176:8788".to_string());
+        .context("CFDROP_NOTIFY must be set for --notify")?;
     let token = std::env::var("CFDROP_RELAY_TOKEN")
         .context("CFDROP_RELAY_TOKEN must be set for --notify")?;
     let resp = reqwest::blocking::Client::builder()
