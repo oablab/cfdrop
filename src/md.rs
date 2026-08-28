@@ -1,0 +1,273 @@
+//! `--md` mode: convert a directory of Markdown files into mobile-friendly
+//! HTML pages (dark theme, vertical-scroll layout) in a staging directory,
+//! which is then deployed like any other asset directory.
+//!
+//! - `*.md` → `*.html`, wrapped in the mobile template
+//! - everything else is copied through unchanged (images, css, ...)
+//! - if the source has no `index.md`/`index.html`, an index page listing all
+//!   converted pages as tappable cards is generated
+
+use anyhow::{bail, Context, Result};
+use pulldown_cmark::{html, Options, Parser};
+use std::fs;
+use std::path::{Path, PathBuf};
+use walkdir::WalkDir;
+
+const CSS: &str = r#"
+:root { --bg:#0f1117; --card:#1a1d26; --fg:#e6e8ee; --dim:#8b90a0; --line:#2a2e3b;
+        --orange:#ff9900; --red:#f2555a; --green:#4cc38a; --blue:#6ca0f5; }
+* { box-sizing:border-box; margin:0; min-width:0; }
+html, body { overflow-x:hidden; }
+body { background:var(--bg); color:var(--fg); font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+       padding:16px; max-width:720px; margin:0 auto; -webkit-text-size-adjust:100%; }
+a { color:var(--blue); }
+.back { display:inline-block; margin-bottom:12px; font-size:.85rem; text-decoration:none; }
+.md { overflow-wrap:anywhere; }
+.md h1 { font-size:1.3rem; margin:20px 0 10px; color:var(--orange); }
+.md h2 { font-size:1.1rem; margin:18px 0 8px; border-bottom:1px solid var(--line); padding-bottom:5px; }
+.md h3 { font-size:.98rem; margin:14px 0 6px; }
+.md h1:first-child { margin-top:0; }
+.md p, .md ul, .md ol { margin-bottom:12px; font-size:.94rem; }
+.md ul, .md ol { padding-left:22px; }
+.md li { margin-bottom:4px; }
+.md code { background:#232734; border:1px solid var(--line); border-radius:5px; padding:0 4px;
+           font:.85em ui-monospace,SFMono-Regular,Menlo,monospace; color:var(--blue); overflow-wrap:anywhere; }
+.md pre { background:#0b0d12; border:1px solid var(--line); border-radius:10px; padding:12px;
+          overflow-x:auto; margin-bottom:12px; }
+.md pre code { background:none; border:0; padding:0; color:var(--fg); font-size:.8rem; }
+.md blockquote { border-left:3px solid var(--orange); padding:4px 12px; color:var(--dim);
+                 margin-bottom:12px; background:var(--card); border-radius:0 8px 8px 0; }
+.md .tablewrap { overflow-x:auto; margin-bottom:12px; border:1px solid var(--line); border-radius:10px; }
+.md table { border-collapse:collapse; font-size:.85rem; min-width:100%; }
+.md th, .md td { border:1px solid var(--line); padding:6px 10px; text-align:left; }
+.md th { background:var(--card); }
+.md img { max-width:100%; height:auto; border-radius:10px; }
+.md hr { border:0; border-top:1px solid var(--line); margin:18px 0; }
+.card { display:block; width:100%; background:var(--card); border:1px solid var(--line); border-radius:12px;
+        padding:14px; margin-bottom:10px; text-decoration:none; color:var(--fg); font-weight:600;
+        overflow-wrap:anywhere; }
+.card:active { background:#232734; }
+.card .path { display:block; font-weight:400; font-size:.78rem; color:var(--dim); margin-top:3px;
+              font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+footer { color:var(--dim); font-size:.75rem; text-align:center; margin:24px 0 8px; }
+"#;
+
+fn escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
+
+/// Render markdown to an HTML fragment (tables, strikethrough, footnotes,
+/// task lists enabled). Tables get wrapped so wide ones scroll inside the
+/// block instead of the page.
+pub fn md_to_html(md: &str) -> String {
+    let mut opts = Options::empty();
+    opts.insert(Options::ENABLE_TABLES);
+    opts.insert(Options::ENABLE_STRIKETHROUGH);
+    opts.insert(Options::ENABLE_FOOTNOTES);
+    opts.insert(Options::ENABLE_TASKLISTS);
+    let parser = Parser::new_ext(md, opts);
+    let mut out = String::new();
+    html::push_html(&mut out, parser);
+    out.replace("<table>", r#"<div class="tablewrap"><table>"#)
+        .replace("</table>", "</table></div>")
+}
+
+/// First `# ` heading, or the fallback.
+pub fn title_of(md: &str, fallback: &str) -> String {
+    md.lines()
+        .find_map(|l| l.trim().strip_prefix("# ").map(|t| t.trim().to_string()))
+        .filter(|t| !t.is_empty())
+        .unwrap_or_else(|| fallback.to_string())
+}
+
+fn render_page(title: &str, body: &str, with_back: bool) -> String {
+    let back = if with_back {
+        r#"<a class="back" href="/">← Index</a>"#
+    } else {
+        ""
+    };
+    format!(
+        "<!DOCTYPE html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">\
+<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
+<title>{}</title><style>{CSS}</style></head><body>{back}\
+<div class=\"md\">{body}</div>\
+<footer>deployed with cftmp</footer></body></html>",
+        escape(title)
+    )
+}
+
+/// Convert `src` into a staging directory of deployable HTML. Returns the
+/// staging path; caller deploys it and removes it afterwards.
+pub fn stage_directory(src: &Path) -> Result<PathBuf> {
+    if !src.is_dir() {
+        bail!("{} is not a directory", src.display());
+    }
+    static STAGE_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let seq = STAGE_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let dest = std::env::temp_dir().join(format!(
+        "cftmp-md-stage-{}-{seq}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&dest);
+    fs::create_dir_all(&dest).context("creating staging directory")?;
+
+    // (href, title) of every page, for the auto-index
+    let mut pages: Vec<(String, String)> = Vec::new();
+    let mut have_index = false;
+
+    for item in WalkDir::new(src).follow_links(false) {
+        let item = item.context("walking source directory")?;
+        if !item.file_type().is_file() {
+            continue;
+        }
+        let rel = item.path().strip_prefix(src).context("relative path")?;
+        if rel
+            .components()
+            .any(|c| c.as_os_str().to_string_lossy().starts_with('.'))
+        {
+            continue;
+        }
+
+        let is_md = item
+            .path()
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("md"));
+
+        let out_rel = if is_md {
+            rel.with_extension("html")
+        } else {
+            rel.to_path_buf()
+        };
+        let out_path = dest.join(&out_rel);
+        if let Some(parent) = out_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+
+        if is_md {
+            let raw = fs::read_to_string(item.path())
+                .with_context(|| format!("reading {}", item.path().display()))?;
+            let stem = rel.file_stem().unwrap_or_default().to_string_lossy().to_string();
+            let title = title_of(&raw, &stem);
+            let rel_str = out_rel.to_string_lossy().replace('\\', "/");
+            let is_index = rel_str == "index.html";
+            let page = render_page(&title, &md_to_html(&raw), !is_index);
+            fs::write(&out_path, page)?;
+            if is_index {
+                have_index = true;
+            } else {
+                // extensionless link (html_handling serves it)
+                let href = format!("/{}", rel_str.trim_end_matches(".html"));
+                pages.push((href, title));
+            }
+        } else {
+            if out_rel.to_string_lossy() == "index.html" {
+                have_index = true;
+            }
+            fs::copy(item.path(), &out_path)
+                .with_context(|| format!("copying {}", item.path().display()))?;
+        }
+    }
+
+    if pages.is_empty() && !have_index {
+        bail!("no markdown files found in {}", src.display());
+    }
+
+    if !have_index {
+        pages.sort();
+        let dir_name = src
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "pages".into());
+        let cards: String = pages
+            .iter()
+            .map(|(href, title)| {
+                format!(
+                    r#"<a class="card" href="{}">{}<span class="path">{}</span></a>"#,
+                    escape(href),
+                    escape(title),
+                    escape(href)
+                )
+            })
+            .collect();
+        let body = format!("<h1>{}</h1>{cards}", escape(&dir_name));
+        fs::write(dest.join("index.html"), render_page(&dir_name, &body, false))?;
+    }
+
+    Ok(dest)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn renders_code_and_tables() {
+        let out = md_to_html("run `hashFile()` now\n\n| a | b |\n|---|---|\n| 1 | 2 |\n");
+        assert!(out.contains("<code>hashFile()</code>"));
+        assert!(out.contains(r#"<div class="tablewrap"><table>"#));
+        assert!(out.contains("</table></div>"));
+    }
+
+    #[test]
+    fn extracts_title() {
+        assert_eq!(title_of("# Hello World\nbody", "fb"), "Hello World");
+        assert_eq!(title_of("no heading here", "fb"), "fb");
+    }
+
+    #[test]
+    fn stages_md_dir_with_auto_index() {
+        let src = std::env::temp_dir().join(format!("cftmp-md-src-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&src);
+        fs::create_dir_all(src.join("sub")).unwrap();
+        fs::write(src.join("alpha.md"), "# Alpha Page\n\nhello `code`").unwrap();
+        fs::write(src.join("sub/beta.md"), "no heading").unwrap();
+        fs::write(src.join("logo.txt"), "asset").unwrap();
+
+        let dest = stage_directory(&src).unwrap();
+        assert!(dest.join("alpha.html").is_file());
+        assert!(dest.join("sub/beta.html").is_file());
+        assert!(dest.join("logo.txt").is_file());
+        let index = fs::read_to_string(dest.join("index.html")).unwrap();
+        assert!(index.contains(r#"href="/alpha""#));
+        assert!(index.contains("Alpha Page"));
+        assert!(index.contains(r#"href="/sub/beta""#));
+        let alpha = fs::read_to_string(dest.join("alpha.html")).unwrap();
+        assert!(alpha.contains("<code>code</code>"));
+        assert!(alpha.contains("← Index"));
+        assert!(alpha.contains("overflow-x:hidden"));
+
+        let _ = fs::remove_dir_all(&src);
+        let _ = fs::remove_dir_all(&dest);
+    }
+
+    #[test]
+    fn respects_existing_index_md() {
+        let src = std::env::temp_dir().join(format!("cftmp-md-src-idx-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&src);
+        fs::create_dir_all(&src).unwrap();
+        fs::write(src.join("index.md"), "# My Home\n\ncustom").unwrap();
+        fs::write(src.join("other.md"), "# Other").unwrap();
+
+        let dest = stage_directory(&src).unwrap();
+        let index = fs::read_to_string(dest.join("index.html")).unwrap();
+        assert!(index.contains("My Home"));
+        assert!(!index.contains(r#"class="card""#)); // no auto-index
+        assert!(!index.contains("← Index")); // index has no back link
+
+        let _ = fs::remove_dir_all(&src);
+        let _ = fs::remove_dir_all(&dest);
+    }
+
+    #[test]
+    fn rejects_dir_without_markdown() {
+        let src = std::env::temp_dir().join(format!("cftmp-md-src-none-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&src);
+        fs::create_dir_all(&src).unwrap();
+        fs::write(src.join("data.txt"), "x").unwrap();
+        assert!(stage_directory(&src).is_err());
+        let _ = fs::remove_dir_all(&src);
+    }
+}

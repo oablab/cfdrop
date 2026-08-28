@@ -35,13 +35,14 @@ The temporary account is cached in the OS config dir (`~/Library/Application Sup
 
 | Command | Description |
 |---------|-------------|
-| `cftmp deploy -d <dir> [-n name] [-y] [--fresh] [--auth user:pass]` | Bundle and deploy a directory |
+| `cftmp deploy -d <dir> [-n name] [-y] [--fresh] [--auth user:pass] [--md]` | Bundle and deploy a directory |
 | `cftmp status` | Show cached temp account, claim URL, expiry |
 | `cftmp logout` | Forget the cached temp account |
 
 - `-y` accepts Cloudflare's Terms of Service / Privacy Policy without prompting (required for non-interactive use)
 - `--fresh` forces provisioning a new account even if a cached one is still valid
 - `--auth user:pass` protects the site with HTTP Basic Auth: deploys a small guard Worker in front of the assets (`run_worker_first`) that returns 401 unless the browser sends the matching credential. Note the credential is baked into the Worker script — fine for a 60-minute preview, not a real security boundary. For long-lived sites, claim the account and use [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/policies/access/) instead (not available on temporary accounts).
+- `--md` treats the directory as Markdown: every `*.md` is converted (pulldown-cmark: tables, strikethrough, footnotes, task lists) into a dark-theme, mobile-first HTML page — vertical scrolling only, wide tables scroll inside their own block. Non-markdown files are copied through. Unless an `index.md`/`index.html` exists, an index page listing all pages as tappable cards is generated. Titles come from the first `# heading`.
 - Worker name defaults to the sanitized directory name
 
 ## Notes & limits

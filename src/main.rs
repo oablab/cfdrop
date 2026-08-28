@@ -1,5 +1,6 @@
 mod cf;
 mod manifest;
+mod md;
 mod pow;
 mod state;
 
@@ -36,6 +37,10 @@ enum Command {
         /// Protect the site with HTTP Basic Auth, format "user:pass"
         #[arg(long, value_name = "USER:PASS")]
         auth: Option<String>,
+        /// Treat the directory as Markdown: convert *.md to mobile-friendly
+        /// HTML pages (auto-generated index unless index.md exists)
+        #[arg(long)]
+        md: bool,
     },
     /// Show the cached temporary account (claim URL, expiry)
     Status,
@@ -59,7 +64,8 @@ fn run() -> Result<()> {
             yes,
             fresh,
             auth,
-        } => deploy(directory, name, yes, fresh, auth),
+            md,
+        } => deploy(directory, name, yes, fresh, auth, md),
         Command::Status => status(),
         Command::Logout => {
             let path = state::state_path()?;
@@ -107,6 +113,7 @@ fn deploy(
     yes: bool,
     fresh: bool,
     auth: Option<String>,
+    md: bool,
 ) -> Result<()> {
     // Validate and encode the Basic Auth credential up front
     let auth_token = match &auth {
@@ -135,8 +142,18 @@ fn deploy(
         }),
     );
 
+    // Optionally convert Markdown into a staged HTML directory
+    let staging = if md {
+        let staged = md::stage_directory(&directory)?;
+        eprintln!("Converted Markdown to mobile HTML ({} staged).", staged.display());
+        Some(staged)
+    } else {
+        None
+    };
+    let source_dir = staging.as_deref().unwrap_or(&directory);
+
     // 1. Build the asset manifest
-    let entries = manifest::build_manifest(&directory)?;
+    let entries = manifest::build_manifest(source_dir)?;
     let total_bytes: u64 = entries.iter().map(|e| e.size).sum();
     eprintln!(
         "Found {} file(s), {:.1} KiB total.",
@@ -190,6 +207,9 @@ fn deploy(
     println!();
     println!("This temporary account expires in ~{minutes_left} minutes.");
     println!("Keep it by claiming: {}", account.claim_url);
+    if let Some(staged) = staging {
+        let _ = std::fs::remove_dir_all(staged);
+    }
     Ok(())
 }
 
