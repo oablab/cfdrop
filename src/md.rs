@@ -169,7 +169,7 @@ fn render_page(title: &str, body: &str, with_back: bool) -> String {
         ""
     };
     let mermaid = if body.contains(MERMAID_MARKER) {
-        r#"<script src="/_cftmp/mermaid.min.js"></script><script>mermaid.initialize({startOnLoad:true,theme:"dark"});</script>"#
+        r#"<script src="/_cfdrop/mermaid.min.js"></script><script>mermaid.initialize({startOnLoad:true,theme:"dark"});</script>"#
     } else {
         ""
     };
@@ -178,7 +178,7 @@ fn render_page(title: &str, body: &str, with_back: bool) -> String {
 <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
 <title>{}</title><style>{CSS}</style></head><body>{back}\
 <div class=\"md\">{body}</div>\
-<footer>deployed with cftmp</footer>{mermaid}</body></html>",
+<footer>deployed with cfdrop</footer>{mermaid}</body></html>",
         escape(title)
     )
 }
@@ -192,7 +192,7 @@ pub fn stage_directory(src: &Path) -> Result<PathBuf> {
     static STAGE_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let seq = STAGE_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let dest = std::env::temp_dir().join(format!(
-        "cftmp-md-stage-{}-{seq}",
+        "cfdrop-md-stage-{}-{seq}",
         std::process::id()
     ));
     let _ = fs::remove_dir_all(&dest);
@@ -261,7 +261,7 @@ pub fn stage_directory(src: &Path) -> Result<PathBuf> {
     }
 
     if needs_mermaid {
-        let vendor_dir = dest.join("_cftmp");
+        let vendor_dir = dest.join("_cfdrop");
         fs::create_dir_all(&vendor_dir)?;
         fs::write(vendor_dir.join("mermaid.min.js"), MERMAID_JS)
             .context("writing bundled mermaid.min.js")?;
@@ -344,16 +344,16 @@ mod tests {
 
     #[test]
     fn mermaid_asset_and_script_only_when_used() {
-        let src = std::env::temp_dir().join(format!("cftmp-md-src-mm-{}", std::process::id()));
+        let src = std::env::temp_dir().join(format!("cfdrop-md-src-mm-{}", std::process::id()));
         let _ = fs::remove_dir_all(&src);
         fs::create_dir_all(&src).unwrap();
         fs::write(src.join("diagram.md"), "# D\n\n```mermaid\ngraph TD\nA-->B\n```\n").unwrap();
         fs::write(src.join("plain.md"), "# P\n\ntext only").unwrap();
 
         let dest = stage_directory(&src).unwrap();
-        assert!(dest.join("_cftmp/mermaid.min.js").is_file());
+        assert!(dest.join("_cfdrop/mermaid.min.js").is_file());
         let diagram = fs::read_to_string(dest.join("diagram.html")).unwrap();
-        assert!(diagram.contains(r#"src="/_cftmp/mermaid.min.js""#));
+        assert!(diagram.contains(r#"src="/_cfdrop/mermaid.min.js""#));
         assert!(diagram.contains("mermaid.initialize"));
         let plain = fs::read_to_string(dest.join("plain.html")).unwrap();
         assert!(!plain.contains("mermaid.min.js"));
@@ -364,12 +364,12 @@ mod tests {
 
     #[test]
     fn no_mermaid_asset_when_unused() {
-        let src = std::env::temp_dir().join(format!("cftmp-md-src-nomm-{}", std::process::id()));
+        let src = std::env::temp_dir().join(format!("cfdrop-md-src-nomm-{}", std::process::id()));
         let _ = fs::remove_dir_all(&src);
         fs::create_dir_all(&src).unwrap();
         fs::write(src.join("a.md"), "# A\n\nplain").unwrap();
         let dest = stage_directory(&src).unwrap();
-        assert!(!dest.join("_cftmp").exists());
+        assert!(!dest.join("_cfdrop").exists());
         let _ = fs::remove_dir_all(&src);
         let _ = fs::remove_dir_all(&dest);
     }
@@ -382,7 +382,7 @@ mod tests {
 
     #[test]
     fn stages_md_dir_with_auto_index() {
-        let src = std::env::temp_dir().join(format!("cftmp-md-src-{}", std::process::id()));
+        let src = std::env::temp_dir().join(format!("cfdrop-md-src-{}", std::process::id()));
         let _ = fs::remove_dir_all(&src);
         fs::create_dir_all(src.join("sub")).unwrap();
         fs::write(src.join("alpha.md"), "# Alpha Page\n\nhello `code`").unwrap();
@@ -408,7 +408,7 @@ mod tests {
 
     #[test]
     fn respects_existing_index_md() {
-        let src = std::env::temp_dir().join(format!("cftmp-md-src-idx-{}", std::process::id()));
+        let src = std::env::temp_dir().join(format!("cfdrop-md-src-idx-{}", std::process::id()));
         let _ = fs::remove_dir_all(&src);
         fs::create_dir_all(&src).unwrap();
         fs::write(src.join("index.md"), "# My Home\n\ncustom").unwrap();
@@ -426,7 +426,7 @@ mod tests {
 
     #[test]
     fn rejects_dir_without_markdown() {
-        let src = std::env::temp_dir().join(format!("cftmp-md-src-none-{}", std::process::id()));
+        let src = std::env::temp_dir().join(format!("cfdrop-md-src-none-{}", std::process::id()));
         let _ = fs::remove_dir_all(&src);
         fs::create_dir_all(&src).unwrap();
         fs::write(src.join("data.txt"), "x").unwrap();

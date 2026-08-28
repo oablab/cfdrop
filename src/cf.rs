@@ -85,7 +85,7 @@ impl CfClient {
     pub fn new() -> Result<Self> {
         let http = Client::builder()
             .timeout(Duration::from_secs(120))
-            .user_agent(concat!("cftmp/", env!("CARGO_PKG_VERSION")))
+            .user_agent(concat!("cfdrop/", env!("CARGO_PKG_VERSION")))
             .build()
             .context("building HTTP client")?;
         Ok(Self { http })
@@ -344,7 +344,7 @@ export default {{
     if (got.length !== EXPECTED.length || got !== EXPECTED) {{
       return new Response("Unauthorized", {{
         status: 401,
-        headers: {{ "WWW-Authenticate": 'Basic realm="cftmp", charset="UTF-8"' }},
+        headers: {{ "WWW-Authenticate": 'Basic realm="cfdrop", charset="UTF-8"' }},
       }});
     }}
     return env.ASSETS.fetch(request);

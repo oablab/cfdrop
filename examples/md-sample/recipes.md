@@ -3,7 +3,7 @@
 ## Password-protect a preview
 
 ```bash
-cftmp deploy -d site/ --auth alice:s3cret -y
+cfdrop deploy -d site/ --auth alice:s3cret -y
 ```
 
 Preview-grade only — the credential is baked into the Worker script.
@@ -12,7 +12,7 @@ For long-lived sites, claim the account and use Cloudflare Access.
 ## Publish notes as a mobile site
 
 ```bash
-cftmp deploy -d notes/ --md -y
+cfdrop deploy -d notes/ --md -y
 ```
 
 Every `*.md` becomes a dark-theme mobile page. This very site is the demo:

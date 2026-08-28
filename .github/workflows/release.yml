@@ -22,7 +22,7 @@ jobs:
         run: |
           gh release create "$GITHUB_REF_NAME" \
             --repo "$GITHUB_REPOSITORY" \
-            --title "cftmp $GITHUB_REF_NAME" \
+            --title "cfdrop $GITHUB_REF_NAME" \
             --generate-notes || echo "release already exists"
 
   linux:
@@ -33,9 +33,9 @@ jobs:
       matrix:
         include:
           - target: x86_64-unknown-linux-musl
-            asset: cftmp-linux-amd64
+            asset: cfdrop-linux-amd64
           - target: aarch64-unknown-linux-musl
-            asset: cftmp-linux-arm64
+            asset: cfdrop-linux-arm64
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -51,7 +51,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          tar -czf ${{ matrix.asset }}.tar.gz -C target/${{ matrix.target }}/release cftmp
+          tar -czf ${{ matrix.asset }}.tar.gz -C target/${{ matrix.target }}/release cfdrop
           gh release upload "$GITHUB_REF_NAME" ${{ matrix.asset }}.tar.gz \
             --repo "$GITHUB_REPOSITORY" --clobber
 
@@ -67,14 +67,14 @@ jobs:
           export PATH="$HOME/.cargo/bin:$PATH"
           cargo test
           cargo build --release
-          tar -czf cftmp-macos-arm64.tar.gz -C target/release cftmp
+          tar -czf cfdrop-macos-arm64.tar.gz -C target/release cfdrop
           RELEASE_ID=$(curl -sf -H "Authorization: Bearer $GH_TOKEN" \
             "https://api.github.com/repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME" \
             | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')
           # Delete a pre-existing asset with the same name (re-run safety)
           ASSET_ID=$(curl -sf -H "Authorization: Bearer $GH_TOKEN" \
             "https://api.github.com/repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets" \
-            | python3 -c 'import json,sys; a=[x["id"] for x in json.load(sys.stdin) if x["name"]=="cftmp-macos-arm64.tar.gz"]; print(a[0] if a else "")')
+            | python3 -c 'import json,sys; a=[x["id"] for x in json.load(sys.stdin) if x["name"]=="cfdrop-macos-arm64.tar.gz"]; print(a[0] if a else "")')
           if [ -n "$ASSET_ID" ]; then
             curl -sf -X DELETE -H "Authorization: Bearer $GH_TOKEN" \
               "https://api.github.com/repos/$GITHUB_REPOSITORY/releases/assets/$ASSET_ID"
@@ -82,7 +82,7 @@ jobs:
           curl -sf -X POST \
             -H "Authorization: Bearer $GH_TOKEN" \
             -H "Content-Type: application/gzip" \
-            --data-binary @cftmp-macos-arm64.tar.gz \
-            "https://uploads.github.com/repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets?name=cftmp-macos-arm64.tar.gz" \
+            --data-binary @cfdrop-macos-arm64.tar.gz \
+            "https://uploads.github.com/repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets?name=cfdrop-macos-arm64.tar.gz" \
             -o /dev/null
-          echo "uploaded cftmp-macos-arm64.tar.gz to release $RELEASE_ID"
+          echo "uploaded cfdrop-macos-arm64.tar.gz to release $RELEASE_ID"

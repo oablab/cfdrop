@@ -13,7 +13,7 @@ Pages without an analysis file still render with a link to GitHub.
 
 Usage:
     python3 examples/gen-triage-site.py
-    cftmp deploy --directory /tmp/openab-issues-site --name openab-issues -y
+    cfdrop deploy --directory /tmp/openab-issues-site --name openab-issues -y
 """
 import json
 import html

@@ -12,7 +12,7 @@ use std::io::Write;
 use std::path::PathBuf;
 
 #[derive(Parser)]
-#[command(name = "cftmp", version, about = "Deploy a directory to a temporary Cloudflare account and get a live workers.dev URL")]
+#[command(name = "cfdrop", version, about = "Deploy a directory to a temporary Cloudflare account and get a live workers.dev URL")]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -88,7 +88,7 @@ fn sanitize_name(raw: &str) -> String {
     }
     let s = s.trim_matches('-').to_string();
     if s.is_empty() {
-        "cftmp-site".to_string()
+        "cfdrop-site".to_string()
     } else {
         s.chars().take(54).collect()
     }
@@ -138,7 +138,7 @@ fn deploy(
             directory
                 .file_name()
                 .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| "cftmp-site".into())
+                .unwrap_or_else(|| "cfdrop-site".into())
         }),
     );
 
@@ -224,7 +224,7 @@ fn status() -> Result<()> {
             println!("Claim by:  {}", acc.claim_expires_at);
             println!("Status:    {}", if usable { "usable" } else { "EXPIRED" });
         }
-        None => println!("No cached temporary account. Run `cftmp deploy` to create one."),
+        None => println!("No cached temporary account. Run `cfdrop deploy` to create one."),
     }
     Ok(())
 }
@@ -237,7 +237,7 @@ mod tests {
     fn sanitizes_names() {
         assert_eq!(sanitize_name("My Site!"), "my-site");
         assert_eq!(sanitize_name("path.to.dir"), "path-to-dir");
-        assert_eq!(sanitize_name("---"), "cftmp-site");
+        assert_eq!(sanitize_name("---"), "cfdrop-site");
         assert_eq!(sanitize_name("Already-ok-123"), "already-ok-123");
     }
 }

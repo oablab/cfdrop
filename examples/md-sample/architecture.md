@@ -4,7 +4,7 @@
 
 ```mermaid
 graph TD
-  A[cftmp deploy --md] --> B[Convert *.md to HTML]
+  A[cfdrop deploy --md] --> B[Convert *.md to HTML]
   B --> C{Cached temp account valid?}
   C -- yes --> E[Assets upload session]
   C -- no --> D[Solve PoW, provision account]

@@ -1,4 +1,4 @@
-# cftmp — Field Guide
+# cfdrop — Field Guide
 
 Deploy any directory to a **temporary Cloudflare account** and get a live
 `workers.dev` URL in seconds. No signup, no wrangler, no Node.

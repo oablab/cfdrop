@@ -1,9 +1,9 @@
-# cftmp
+# cfdrop
 
 Deploy a directory to a **temporary Cloudflare account** — no signup, no wrangler, no Node — and get a live `workers.dev` URL for browsing. Self-contained Rust CLI.
 
 ```
-cftmp deploy --directory path/to/dir/
+cfdrop deploy --directory path/to/dir/
 ```
 
 ```
@@ -29,15 +29,15 @@ Implements Cloudflare's [claim-deployments (temporary accounts)](https://develop
 5. `POST .../workers/assets/upload?base64=true` per bucket → completion JWT
 6. `PUT .../workers/scripts/{name}` (assets-only Worker) + enable `workers.dev` → live URL
 
-The temporary account is cached in the OS config dir (`~/Library/Application Support/cftmp/state.json` on macOS, mode 0600) and reused across deploys until it expires — same behavior as `wrangler deploy --temporary`.
+The temporary account is cached in the OS config dir (`~/Library/Application Support/cfdrop/state.json` on macOS, mode 0600) and reused across deploys until it expires — same behavior as `wrangler deploy --temporary`.
 
 ## Commands
 
 | Command | Description |
 |---------|-------------|
-| `cftmp deploy -d <dir> [-n name] [-y] [--fresh] [--auth user:pass] [--md]` | Bundle and deploy a directory |
-| `cftmp status` | Show cached temp account, claim URL, expiry |
-| `cftmp logout` | Forget the cached temp account |
+| `cfdrop deploy -d <dir> [-n name] [-y] [--fresh] [--auth user:pass] [--md]` | Bundle and deploy a directory |
+| `cfdrop status` | Show cached temp account, claim URL, expiry |
+| `cfdrop logout` | Forget the cached temp account |
 
 - `-y` accepts Cloudflare's Terms of Service / Privacy Policy without prompting (required for non-interactive use)
 - `--fresh` forces provisioning a new account even if a cached one is still valid
@@ -77,7 +77,7 @@ Single static-ish binary (rustls, no OpenSSL dependency).
 
 ```
 python3 examples/gen-triage-site.py
-cftmp deploy --directory /tmp/openab-issues-site --name openab-issues -y
+cfdrop deploy --directory /tmp/openab-issues-site --name openab-issues -y
 ```
 
 Detail-page analysis sections are read from `/tmp/openab-analysis/<number>.json` when present (e.g. produced by an AI agent pass over the issues); pages render fine without them. Point it at another repo by editing `REPO` at the top of the script.

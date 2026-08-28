@@ -30,7 +30,7 @@ impl TempAccount {
 pub fn state_path() -> Result<PathBuf> {
     let dir = dirs::config_dir()
         .context("could not determine the user config directory")?
-        .join("cftmp");
+        .join("cfdrop");
     Ok(dir.join("state.json"))
 }
 
@@ -95,7 +95,7 @@ mod tests {
 
     #[test]
     fn roundtrips_through_disk() {
-        let dir = std::env::temp_dir().join(format!("cftmp-test-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("cfdrop-test-{}", std::process::id()));
         let path = dir.join("state.json");
         let a = account(50, 50);
         save(&path, &a).unwrap();
