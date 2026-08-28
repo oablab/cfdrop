@@ -77,7 +77,18 @@ fn highlight(code: &str, lang: &str) -> Option<String> {
     static TS: OnceLock<ThemeSet> = OnceLock::new();
     let ss = SS.get_or_init(SyntaxSet::load_defaults_newlines);
     let ts = TS.get_or_init(ThemeSet::load_defaults);
-    let syntax = ss.find_syntax_by_token(lang)?;
+    let syntax = ss.find_syntax_by_token(lang).or_else(|| {
+        // Tokens common in fences but absent from syntect's default grammars:
+        // approximate with a close relative rather than falling back to plain.
+        let alias = match lang {
+            "ts" | "tsx" | "typescript" => "js",
+            "jsonc" | "json5" => "json",
+            "shell" | "zsh" => "bash",
+            "vue" | "svelte" => "html",
+            _ => return None,
+        };
+        ss.find_syntax_by_token(alias)
+    })?;
     let theme = &ts.themes["base16-ocean.dark"];
     let rendered = highlighted_html_for_string(code, ss, syntax, theme).ok()?;
     // Drop syntect's inline background on <pre> so the page CSS controls it.
@@ -301,6 +312,12 @@ mod tests {
         let out = md_to_html("```rust\nlet x: u32 = 1;\n```\n");
         assert!(out.contains("<span style=\"color:"), "expected colored spans, got: {out}");
         assert!(!out.contains("<pre style="), "pre background must be stripped");
+    }
+
+    #[test]
+    fn typescript_fence_highlights_via_js_alias() {
+        let out = md_to_html("```ts\nconst x = { a: 1 };\n```\n");
+        assert!(out.contains("<span style=\"color:"), "ts should highlight via js alias: {out}");
     }
 
     #[test]
