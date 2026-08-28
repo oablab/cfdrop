@@ -45,6 +45,14 @@ The temporary account is cached in the OS config dir (`~/Library/Application Sup
 - `--md` treats the directory as Markdown: every `*.md` is converted (pulldown-cmark: tables, strikethrough, footnotes, task lists) into a dark-theme, mobile-first HTML page — vertical scrolling only, wide tables scroll inside their own block. Non-markdown files are copied through. Unless an `index.md`/`index.html` exists, an index page listing all pages as tappable cards is generated. Titles come from the first `# heading`.
 - Worker name defaults to the sanitized directory name
 
+## `--md` on a phone
+
+Four `.md` files, one deploy — mermaid diagrams, syntax-highlighted code, task lists (source: [`examples/md-sample/`](examples/md-sample/)):
+
+| Mermaid `graph TD` | Mermaid `sequenceDiagram` | Syntax highlighting | Tables & task lists |
+|---|---|---|---|
+| ![mermaid flow](docs/screenshots/md-mermaid-flow.png) | ![mermaid sequence](docs/screenshots/md-mermaid-sequence.png) | ![highlighted rust](docs/screenshots/md-syntax-highlight.png) | ![quick start](docs/screenshots/md-quick-start.png) |
+
 ## Notes & limits
 
 - Temporary accounts last **60 minutes** unless claimed via the printed claim URL; unclaimed accounts and their deployments auto-delete
