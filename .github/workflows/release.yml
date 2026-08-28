@@ -7,10 +7,29 @@ on:
 permissions:
   contents: write
 
+# Assets are uploaded directly to the GitHub release from each build job —
+# release assets do not count against the org's Actions artifact storage
+# quota (which actions/upload-artifact hit). The macmini runner has no gh
+# CLI, so the macos job uploads via curl + the REST API.
+
 jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "cftmp $GITHUB_REF_NAME" \
+            --generate-notes || echo "release already exists"
+
   linux:
+    needs: create-release
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         include:
           - target: x86_64-unknown-linux-musl
@@ -23,46 +42,47 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: cross
-      - name: Test (host)
+      - name: Test (host arch)
         if: matrix.target == 'x86_64-unknown-linux-musl'
         run: cross test --target ${{ matrix.target }}
       - name: Build
         run: cross build --release --target ${{ matrix.target }}
-      - name: Package
-        run: tar -czf ${{ matrix.asset }}.tar.gz -C target/${{ matrix.target }}/release cftmp
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.asset }}
-          path: ${{ matrix.asset }}.tar.gz
+      - name: Upload to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tar -czf ${{ matrix.asset }}.tar.gz -C target/${{ matrix.target }}/release cftmp
+          gh release upload "$GITHUB_REF_NAME" ${{ matrix.asset }}.tar.gz \
+            --repo "$GITHUB_REPOSITORY" --clobber
 
   macos:
+    needs: create-release
     runs-on: oablab-macos
     steps:
       - uses: actions/checkout@v4
-      - name: Test and build
+      - name: Test, build, upload (curl — no gh CLI on this runner)
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           export PATH="$HOME/.cargo/bin:$PATH"
           cargo test
           cargo build --release
           tar -czf cftmp-macos-arm64.tar.gz -C target/release cftmp
-      - uses: actions/upload-artifact@v4
-        with:
-          name: cftmp-macos-arm64
-          path: cftmp-macos-arm64.tar.gz
-
-  release:
-    needs: [linux, macos]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          path: dist
-          merge-multiple: true
-      - name: Create GitHub release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release create "$GITHUB_REF_NAME" dist/*.tar.gz \
-            --repo "$GITHUB_REPOSITORY" \
-            --title "cftmp $GITHUB_REF_NAME" \
-            --generate-notes
+          RELEASE_ID=$(curl -sf -H "Authorization: Bearer $GH_TOKEN" \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME" \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')
+          # Delete a pre-existing asset with the same name (re-run safety)
+          ASSET_ID=$(curl -sf -H "Authorization: Bearer $GH_TOKEN" \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets" \
+            | python3 -c 'import json,sys; a=[x["id"] for x in json.load(sys.stdin) if x["name"]=="cftmp-macos-arm64.tar.gz"]; print(a[0] if a else "")')
+          if [ -n "$ASSET_ID" ]; then
+            curl -sf -X DELETE -H "Authorization: Bearer $GH_TOKEN" \
+              "https://api.github.com/repos/$GITHUB_REPOSITORY/releases/assets/$ASSET_ID"
+          fi
+          curl -sf -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Content-Type: application/gzip" \
+            --data-binary @cftmp-macos-arm64.tar.gz \
+            "https://uploads.github.com/repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets?name=cftmp-macos-arm64.tar.gz" \
+            -o /dev/null
+          echo "uploaded cftmp-macos-arm64.tar.gz to release $RELEASE_ID"
