@@ -63,9 +63,11 @@ Single static-ish binary (rustls, no OpenSSL dependency).
 
 ## Example
 
-`examples/gen-triage-site.py` generates a mobile-first static site summarizing `aws/aws-cdk` needs-triage issues (index tiles + per-issue detail pages with flow diagrams), then:
+`examples/gen-triage-site.py` fetches all open issues from `openabdev/openab` via the `gh` CLI and generates a mobile-first static site (index tiles + per-issue detail pages with summary, current-vs-expected flow diagram, root-cause analysis, and a suggested triage response), then:
 
 ```
 python3 examples/gen-triage-site.py
-cftmp deploy --directory /tmp/cdk-triage-site --name cdk-needs-triage -y
+cftmp deploy --directory /tmp/openab-issues-site --name openab-issues -y
 ```
+
+Detail-page analysis sections are read from `/tmp/openab-analysis/<number>.json` when present (e.g. produced by an AI agent pass over the issues); pages render fine without them. Point it at another repo by editing `REPO` at the top of the script.

@@ -1,18 +1,44 @@
 #!/usr/bin/env python3
-"""Generate mobile-first static site: index of aws/aws-cdk needs-triage issues +
-per-issue detail pages (summary, current vs expected flow diagram, root cause,
-suggested response)."""
+"""Generate a mobile-first static site summarizing GitHub issues.
+
+Fetches open issues from REPO via the `gh` CLI, then renders:
+  - index.html         tile per issue (no horizontal scroll, tap to open)
+  - <number>.html      per-issue detail page: summary, current-vs-expected
+                       flow diagram, root cause, suggested response
+
+Detail-page analysis is read from ANALYSIS_DIR/<number>.json when present
+(schema: number, summary, current_flow[], expected_flow[], root_cause,
+suggested_response) — e.g. produced by an AI agent pass over the issues.
+Pages without an analysis file still render with a link to GitHub.
+
+Usage:
+    python3 examples/gen-triage-site.py
+    cftmp deploy --directory /tmp/openab-issues-site --name openab-issues -y
+"""
 import json
 import html
 import os
 import glob
+import subprocess
 from datetime import datetime, timezone
 
-SRC = "/tmp/cdk-triage.json"
-ANALYSIS_DIR = "/tmp/triage-analysis"
-OUT_DIR = "/tmp/cdk-triage-site"
+REPO = "openabdev/openab"
+QUERY = f"repo:{REPO}+is:issue+is:open"
+SITE_TITLE = "openab · open issues"
+ANALYSIS_DIR = "/tmp/openab-analysis"
+OUT_DIR = "/tmp/openab-issues-site"
 
-issues = json.load(open(SRC))
+# ---------- fetch ----------
+raw = subprocess.run(
+    ["gh", "api", "-X", "GET", f"search/issues?q={QUERY}&per_page=100",
+     "--jq", "[.items[] | {number, title, url: .html_url, author: .user.login, "
+             "created: .created_at, comments, labels: [.labels[].name]}]"],
+    check=True, capture_output=True, text=True,
+).stdout
+issues = json.loads(raw)
+if not issues:
+    raise SystemExit(f"no open issues found for {REPO}")
+
 analyses = {}
 for p in glob.glob(f"{ANALYSIS_DIR}/*.json"):
     a = json.load(open(p))
@@ -29,14 +55,16 @@ def age_days(created):
 def issue_type(labels):
     if "bug" in labels:
         return "bug"
-    if "feature-request" in labels:
+    if "feature" in labels or "feature-request" in labels:
         return "feature"
     return "other"
 
 
 def module_of(labels):
-    mods = [l for l in labels if l.startswith("@aws-cdk/") or l == "aws-cdk-lib"]
-    return mods[0].replace("@aws-cdk/", "") if mods else "—"
+    skip = {"bug", "feature", "feature-request", "needs-triage", "p1", "p2", "p3",
+            "pending-maintainer", "potential-regression"}
+    mods = [l for l in labels if l not in skip]
+    return mods[0] if mods else "—"
 
 
 BASE_CSS = """
@@ -54,7 +82,6 @@ h1 .repo { color:var(--orange); }
 .b-bug { background:#3a1d20; color:var(--red); }
 .b-feat { background:#16301f; color:var(--green); }
 .b-other { background:#2a2e3b; color:var(--dim); }
-.b-reg { background:#33261a; color:var(--orange); }
 .mod { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; color:var(--blue); overflow-wrap:anywhere; }
 footer { color:var(--dim); font-size:.75rem; text-align:center; margin:24px 0 8px; overflow-wrap:anywhere; }
 """
@@ -105,6 +132,13 @@ h2 { font-size:.8rem; text-transform:uppercase; letter-spacing:.06em; color:var(
 """
 
 
+def badge_bits(it):
+    t = issue_type(it["labels"])
+    badge = {"bug": "b-bug", "feature": "b-feat", "other": "b-other"}[t]
+    label_txt = {"bug": "bug", "feature": "feature", "other": "untyped"}[t]
+    return t, badge, label_txt
+
+
 def flow_html(steps, cls, label):
     parts = [f'<div class="flow {cls}"><h3>{label}</h3>']
     for i, s in enumerate(steps):
@@ -121,10 +155,7 @@ os.makedirs(OUT_DIR, exist_ok=True)
 for it in issues:
     n = it["number"]
     a = analyses.get(n)
-    t = issue_type(it["labels"])
-    badge = {"bug": "b-bug", "feature": "b-feat", "other": "b-other"}[t]
-    label_txt = {"bug": "bug", "feature": "feature", "other": "untyped"}[t]
-    extra = ' <span class="b b-reg">regression?</span>' if "potential-regression" in it["labels"] else ""
+    _, badge, label_txt = badge_bits(it)
 
     if a:
         body_sections = f"""
@@ -138,14 +169,14 @@ for it in issues:
 <section><h2>4 · Suggested response</h2>
 <div class="prose resp"><button class="copybtn" onclick="navigator.clipboard.writeText(document.getElementById('resp').innerText).then(()=>this.textContent='✓ copied')">copy</button><span id="resp">{html.escape(a['suggested_response'])}</span></div></section>"""
     else:
-        body_sections = '<section><div class="prose">Analysis not available for this issue.</div></section>'
+        body_sections = '<section><div class="prose">No analysis file for this issue — see it on GitHub above.</div></section>'
 
     page = f"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>#{n} · aws-cdk triage</title><style>{DETAIL_CSS}</style></head><body>
+<title>#{n} · {html.escape(SITE_TITLE)}</title><style>{DETAIL_CSS}</style></head><body>
 <a class="back" href="/">← All issues</a>
 <div class="hdr">
-  <div class="row1"><span class="num">#{n}</span><span class="b {badge}">{label_txt}</span>{extra}
+  <div class="row1"><span class="num">#{n}</span><span class="b {badge}">{label_txt}</span>
     <span class="num" style="margin-left:auto">{age_days(it['created'])}d old · 💬 {it['comments']}</span></div>
   <div class="title">{html.escape(it['title'])}</div>
   <div class="row1"><span class="mod">{html.escape(module_of(it['labels']))}</span>
@@ -162,13 +193,10 @@ for it in issues:
 rows = []
 for it in sorted(issues, key=lambda x: x["created"], reverse=True):
     n = it["number"]
-    t = issue_type(it["labels"])
-    badge = {"bug": "b-bug", "feature": "b-feat", "other": "b-other"}[t]
-    label_txt = {"bug": "bug", "feature": "feature", "other": "untyped"}[t]
-    extra = ' <span class="b b-reg">regression?</span>' if "potential-regression" in it["labels"] else ""
+    _, badge, label_txt = badge_bits(it)
     rows.append(f"""
   <a class="card" href="/{n}">
-    <div class="row1"><span class="num">#{n}</span><span class="b {badge}">{label_txt}</span>{extra}
+    <div class="row1"><span class="num">#{n}</span><span class="b {badge}">{label_txt}</span>
       <span class="meta">{age_days(it['created'])}d old · 💬 {it['comments']}</span></div>
     <div class="title">{html.escape(it['title'])}</div>
     <div class="row2"><span class="mod">{html.escape(module_of(it['labels']))}</span>
@@ -182,9 +210,9 @@ oldest = max(age_days(i["created"]) for i in issues)
 
 index = f"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>aws-cdk · needs-triage</title><style>{INDEX_CSS}</style></head><body>
-<h1><span class="repo">aws/aws-cdk</span> · needs-triage</h1>
-<div class="sub">Open issues awaiting triage · generated {now.strftime('%Y-%m-%d %H:%M UTC')}</div>
+<title>{html.escape(SITE_TITLE)}</title><style>{INDEX_CSS}</style></head><body>
+<h1><span class="repo">{html.escape(REPO)}</span> · open issues</h1>
+<div class="sub">Open issues · generated {now.strftime('%Y-%m-%d %H:%M UTC')}</div>
 <div class="stats">
   <div class="stat"><div class="v">{n_total}</div><div class="k">total</div></div>
   <div class="stat"><div class="v red">{bugs}</div><div class="k">bugs</div></div>
@@ -192,10 +220,10 @@ index = f"""<!DOCTYPE html>
   <div class="stat"><div class="v blue">{oldest}d</div><div class="k">oldest</div></div>
 </div>
 {''.join(rows)}
-<footer>Tap a card for full analysis · <a href="https://github.com/aws/aws-cdk/issues?q=is%3Aissue+is%3Aopen+label%3Aneeds-triage">live query</a></footer>
+<footer>Tap a card for full analysis · <a href="https://github.com/{REPO}/issues">live query</a></footer>
 </body></html>"""
 
 with open(os.path.join(OUT_DIR, "index.html"), "w") as f:
     f.write(index)
 
-print(f"wrote index + {len(issues)} detail pages to {OUT_DIR} ({len(analyses)} analyses attached)")
+print(f"wrote index + {n_total} detail pages to {OUT_DIR} ({len(analyses)} analyses attached)")
