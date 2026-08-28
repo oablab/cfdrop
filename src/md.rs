@@ -8,9 +8,13 @@
 //!   converted pages as tappable cards is generated
 
 use anyhow::{bail, Context, Result};
-use pulldown_cmark::{html, Options, Parser};
+use pulldown_cmark::{html, CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
+use syntect::highlighting::ThemeSet;
+use syntect::html::highlighted_html_for_string;
+use syntect::parsing::SyntaxSet;
 use walkdir::WalkDir;
 
 const CSS: &str = r#"
@@ -33,8 +37,9 @@ a { color:var(--blue); }
 .md code { background:#232734; border:1px solid var(--line); border-radius:5px; padding:0 4px;
            font:.85em ui-monospace,SFMono-Regular,Menlo,monospace; color:var(--blue); overflow-wrap:anywhere; }
 .md pre { background:#0b0d12; border:1px solid var(--line); border-radius:10px; padding:12px;
-          overflow-x:auto; margin-bottom:12px; }
-.md pre code { background:none; border:0; padding:0; color:var(--fg); font-size:.8rem; }
+          overflow-x:auto; margin-bottom:12px;
+          font:.8rem/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; }
+.md pre code { background:none; border:0; padding:0; color:var(--fg); font-size:1em; }
 .md blockquote { border-left:3px solid var(--orange); padding:4px 12px; color:var(--dim);
                  margin-bottom:12px; background:var(--card); border-radius:0 8px 8px 0; }
 .md .tablewrap { overflow-x:auto; margin-bottom:12px; border:1px solid var(--line); border-radius:10px; }
@@ -59,8 +64,29 @@ fn escape(s: &str) -> String {
         .replace('"', "&quot;")
 }
 
+/// Syntax-highlight `code` for the fenced-block `lang` token. Returns styled
+/// `<pre>...</pre>` HTML (inline color spans, baked at build time — no JS),
+/// or None when the language is unknown.
+fn highlight(code: &str, lang: &str) -> Option<String> {
+    if lang.is_empty() {
+        return None;
+    }
+    static SS: OnceLock<SyntaxSet> = OnceLock::new();
+    static TS: OnceLock<ThemeSet> = OnceLock::new();
+    let ss = SS.get_or_init(SyntaxSet::load_defaults_newlines);
+    let ts = TS.get_or_init(ThemeSet::load_defaults);
+    let syntax = ss.find_syntax_by_token(lang)?;
+    let theme = &ts.themes["base16-ocean.dark"];
+    let rendered = highlighted_html_for_string(code, ss, syntax, theme).ok()?;
+    // Drop syntect's inline background on <pre> so the page CSS controls it.
+    let rest = rendered.strip_prefix("<pre")?;
+    let after_attrs = rest.find('>')?;
+    Some(format!("<pre>{}", &rest[after_attrs + 1..]))
+}
+
 /// Render markdown to an HTML fragment (tables, strikethrough, footnotes,
-/// task lists enabled). Tables get wrapped so wide ones scroll inside the
+/// task lists enabled). Fenced code blocks with a language tag are
+/// syntax-highlighted; tables get wrapped so wide ones scroll inside the
 /// block instead of the page.
 pub fn md_to_html(md: &str) -> String {
     let mut opts = Options::empty();
@@ -68,9 +94,40 @@ pub fn md_to_html(md: &str) -> String {
     opts.insert(Options::ENABLE_STRIKETHROUGH);
     opts.insert(Options::ENABLE_FOOTNOTES);
     opts.insert(Options::ENABLE_TASKLISTS);
-    let parser = Parser::new_ext(md, opts);
+
+    let mut events: Vec<Event> = Vec::new();
+    // (lang, accumulated code) while inside a fenced/indented code block
+    let mut code_block: Option<(String, String)> = None;
+
+    for ev in Parser::new_ext(md, opts) {
+        match ev {
+            Event::Start(Tag::CodeBlock(kind)) => {
+                let lang = match &kind {
+                    CodeBlockKind::Fenced(l) => l
+                        .split(|c: char| c == ',' || c.is_whitespace())
+                        .next()
+                        .unwrap_or("")
+                        .to_string(),
+                    CodeBlockKind::Indented => String::new(),
+                };
+                code_block = Some((lang, String::new()));
+            }
+            Event::Text(t) if code_block.is_some() => {
+                code_block.as_mut().unwrap().1.push_str(&t);
+            }
+            Event::End(TagEnd::CodeBlock) if code_block.is_some() => {
+                let (lang, code) = code_block.take().unwrap();
+                let block = highlight(&code, &lang).unwrap_or_else(|| {
+                    format!("<pre><code>{}</code></pre>", escape(&code))
+                });
+                events.push(Event::Html(block.into()));
+            }
+            other => events.push(other),
+        }
+    }
+
     let mut out = String::new();
-    html::push_html(&mut out, parser);
+    html::push_html(&mut out, events.into_iter());
     out.replace("<table>", r#"<div class="tablewrap"><table>"#)
         .replace("</table>", "</table></div>")
 }
@@ -209,6 +266,27 @@ mod tests {
         assert!(out.contains("<code>hashFile()</code>"));
         assert!(out.contains(r#"<div class="tablewrap"><table>"#));
         assert!(out.contains("</table></div>"));
+    }
+
+    #[test]
+    fn highlights_known_language() {
+        let out = md_to_html("```rust\nlet x: u32 = 1;\n```\n");
+        assert!(out.contains("<span style=\"color:"), "expected colored spans, got: {out}");
+        assert!(!out.contains("<pre style="), "pre background must be stripped");
+    }
+
+    #[test]
+    fn unknown_language_falls_back_to_plain() {
+        let out = md_to_html("```notalang\nfoo & <bar>\n```\n");
+        assert!(out.contains("<pre><code>foo &amp; &lt;bar&gt;\n</code></pre>"));
+        assert!(!out.contains("<span style=\"color:"));
+    }
+
+    #[test]
+    fn plain_fence_is_escaped_not_highlighted() {
+        let out = md_to_html("```\na < b\n```\n");
+        assert!(out.contains("a &lt; b"));
+        assert!(!out.contains("<span style=\"color:"));
     }
 
     #[test]
