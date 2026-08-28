@@ -19,6 +19,7 @@ import json
 import html
 import os
 import glob
+import re
 import subprocess
 from datetime import datetime, timezone
 
@@ -65,6 +66,28 @@ def module_of(labels):
             "pending-maintainer", "potential-regression"}
     mods = [l for l in labels if l not in skip]
     return mods[0] if mods else "—"
+
+
+# Code-like tokens (file paths, Class::method, func(), snake_case, camelCase)
+# get wrapped in <code> for mobile-readable inline code styling.
+CODE_RE = re.compile(r"""(
+    `[^`]+`                                                    # `backticked`
+  | \b[\w./-]+\.(?:tsx?|m?js|rs|py|go|json|ya?ml|toml|md|mjs)\b  # file paths
+  | \b[A-Za-z_][\w:]*::[\w:]+(?:\(\))?                         # Rust::paths
+  | \b[A-Za-z_]\w*\(\)                                         # funcCalls()
+  | \b[a-z]+(?:_[a-z0-9]+)+\b                                  # snake_case
+  | \b[a-z]+[A-Z]\w*\b                                         # lowerCamelCase
+)""", re.X)
+
+
+def codify(escaped_text):
+    """Wrap code-like tokens in <code>. Input must already be html-escaped."""
+    def rep(m):
+        t = m.group(0)
+        if t.startswith("`") and t.endswith("`"):
+            t = t[1:-1]
+        return f"<code>{t}</code>"
+    return CODE_RE.sub(rep, escaped_text)
 
 
 BASE_CSS = """
@@ -116,6 +139,9 @@ h2 { font-size:.8rem; text-transform:uppercase; letter-spacing:.06em; color:var(
      border-bottom:1px solid var(--line); padding-bottom:6px; }
 .prose { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px;
          font-size:.92rem; overflow-wrap:anywhere; white-space:pre-wrap; }
+.prose code, .step code { background:#232734; border:1px solid var(--line); border-radius:5px;
+       padding:0 4px; font:.85em ui-monospace,SFMono-Regular,Menlo,monospace;
+       color:var(--blue); overflow-wrap:anywhere; }
 .flowwrap { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
 @media (max-width:560px) { .flowwrap { grid-template-columns:1fr; } }
 .flow { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:12px; }
@@ -144,7 +170,7 @@ def flow_html(steps, cls, label):
     for i, s in enumerate(steps):
         if i:
             parts.append('<div class="arrow">↓</div>')
-        parts.append(f'<div class="step">{html.escape(s)}</div>')
+        parts.append(f'<div class="step">{codify(html.escape(s))}</div>')
     parts.append("</div>")
     return "".join(parts)
 
@@ -159,15 +185,15 @@ for it in issues:
 
     if a:
         body_sections = f"""
-<section><h2>1 · Summary</h2><div class="prose">{html.escape(a['summary'])}</div></section>
+<section><h2>1 · Summary</h2><div class="prose">{codify(html.escape(a['summary']))}</div></section>
 <section><h2>2 · Current vs Expected</h2>
 <div class="flowwrap">
 {flow_html(a['current_flow'], 'cur', 'Current behavior')}
 {flow_html(a['expected_flow'], 'exp', 'Expected behavior')}
 </div></section>
-<section><h2>3 · Root cause (source analysis)</h2><div class="prose rc">{html.escape(a['root_cause'])}</div></section>
+<section><h2>3 · Root cause (source analysis)</h2><div class="prose rc">{codify(html.escape(a['root_cause']))}</div></section>
 <section><h2>4 · Suggested response</h2>
-<div class="prose resp"><button class="copybtn" onclick="navigator.clipboard.writeText(document.getElementById('resp').innerText).then(()=>this.textContent='✓ copied')">copy</button><span id="resp">{html.escape(a['suggested_response'])}</span></div></section>"""
+<div class="prose resp"><button class="copybtn" onclick="navigator.clipboard.writeText(document.getElementById('resp').innerText).then(()=>this.textContent='✓ copied')">copy</button><span id="resp">{codify(html.escape(a['suggested_response']))}</span></div></section>"""
     else:
         body_sections = '<section><div class="prose">No analysis file for this issue — see it on GitHub above.</div></section>'
 
