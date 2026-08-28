@@ -1,0 +1,71 @@
+# cftmp
+
+Deploy a directory to a **temporary Cloudflare account** — no signup, no wrangler, no Node — and get a live `workers.dev` URL for browsing. Self-contained Rust CLI.
+
+```
+cftmp deploy --directory path/to/dir/
+```
+
+```
+Found 15 file(s), 42.3 KiB total.
+Provisioning temporary Cloudflare account...
+Solving proof-of-work (2000000 SHA-256 hashes)...
+Temporary account Waiting Salmonberry (created), expires 23:41 UTC
+
+✅ Deployed: https://my-site.waiting-salmonberry.workers.dev
+
+This temporary account expires in ~58 minutes.
+Keep it by claiming: https://dash.cloudflare.com/claim-preview?claimToken=...
+```
+
+## How it works
+
+Implements Cloudflare's [claim-deployments (temporary accounts)](https://developers.cloudflare.com/workers/platform/claim-deployments/) provisioning API and the [static assets direct upload](https://developers.cloudflare.com/workers/static-assets/direct-upload/) protocol natively:
+
+1. `POST /provisioning/previews/challenge` → proof-of-work challenge
+2. Solve the SHA-256 checkpoint chain locally (`k × g` sequential hashes, ~1s)
+3. `POST /provisioning/previews` (ToS acceptance) → temp account id + API token + claim URL
+4. `POST .../assets-upload-session` with a content-hash manifest → upload JWT + buckets
+5. `POST .../workers/assets/upload?base64=true` per bucket → completion JWT
+6. `PUT .../workers/scripts/{name}` (assets-only Worker) + enable `workers.dev` → live URL
+
+The temporary account is cached in the OS config dir (`~/Library/Application Support/cftmp/state.json` on macOS, mode 0600) and reused across deploys until it expires — same behavior as `wrangler deploy --temporary`.
+
+## Commands
+
+| Command | Description |
+|---------|-------------|
+| `cftmp deploy -d <dir> [-n name] [-y] [--fresh]` | Bundle and deploy a directory |
+| `cftmp status` | Show cached temp account, claim URL, expiry |
+| `cftmp logout` | Forget the cached temp account |
+
+- `-y` accepts Cloudflare's Terms of Service / Privacy Policy without prompting (required for non-interactive use)
+- `--fresh` forces provisioning a new account even if a cached one is still valid
+- Worker name defaults to the sanitized directory name
+
+## Notes & limits
+
+- Temporary accounts last **60 minutes** unless claimed via the printed claim URL; unclaimed accounts and their deployments auto-delete
+- Asset limits on temp accounts: ≤ 1,000 files, ≤ 5 MiB per file
+- Hidden files/dirs (`.git`, `.DS_Store`, ...) are skipped
+- The claim URL is a **bearer credential** — anyone holding it can claim the account. The state file is written with mode 0600; don't share it
+- Asset hash scheme (must match the server): `hex(sha256(base64(content) + extension))[..32]`
+- The Cloudflare API returns `"errors": null` / `"buckets": null` (explicit nulls) — the envelope types tolerate this
+
+## Build
+
+```
+cargo test
+cargo build --release
+```
+
+Single static-ish binary (rustls, no OpenSSL dependency).
+
+## Example
+
+`examples/gen-triage-site.py` generates a mobile-first static site summarizing `aws/aws-cdk` needs-triage issues (index tiles + per-issue detail pages with flow diagrams), then:
+
+```
+python3 examples/gen-triage-site.py
+cftmp deploy --directory /tmp/cdk-triage-site --name cdk-needs-triage -y
+```
