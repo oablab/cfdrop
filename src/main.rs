@@ -215,15 +215,55 @@ fn deploy(
     println!("This temporary account expires in ~{minutes_left} minutes.");
     println!("Keep it by claiming: {}", account.claim_url);
     if notify {
-        match notify_relay(&url) {
-            Ok(endpoint) => println!("Pushed URL to relay at {endpoint}."),
-            Err(e) => eprintln!("warning: relay notify failed: {e:#}"),
+        // A fresh workers.dev deployment can take a few seconds to propagate;
+        // opening it on the viewer too early shows a blank page. Wait until
+        // the site actually serves before pushing.
+        match wait_until_live(&url, std::time::Duration::from_secs(30)) {
+            Ok(waited) => {
+                if waited.as_millis() > 0 {
+                    eprintln!("Site live after {:.1}s.", waited.as_secs_f32());
+                }
+                match notify_relay(&url) {
+                    Ok(endpoint) => println!("Pushed URL to relay at {endpoint}."),
+                    Err(e) => eprintln!("warning: relay notify failed: {e:#}"),
+                }
+            }
+            Err(e) => eprintln!("warning: site not reachable yet, skipping notify: {e:#}"),
         }
     }
     if let Some(staged) = staging {
         let _ = std::fs::remove_dir_all(staged);
     }
     Ok(())
+}
+
+/// Poll `url` (cache-busted) until it returns 200, or give up after `max`.
+/// Returns how long we waited.
+fn wait_until_live(url: &str, max: std::time::Duration) -> Result<std::time::Duration> {
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()?;
+    let start = std::time::Instant::now();
+    let mut attempt = 0u32;
+    loop {
+        attempt += 1;
+        let probe = format!("{url}/?cfdrop-warmup={attempt}");
+        let ok = client
+            .get(&probe)
+            .send()
+            .map(|r| r.status().is_success())
+            .unwrap_or(false);
+        if ok {
+            // One more hit on the plain URL so the edge the viewer reaches
+            // has served the real path at least once.
+            let _ = client.get(url).send();
+            return Ok(start.elapsed());
+        }
+        if start.elapsed() >= max {
+            anyhow::bail!("still not serving 200 after {}s", max.as_secs());
+        }
+        std::thread::sleep(std::time::Duration::from_secs(1));
+    }
 }
 
 /// POST the deployed URL to the cfdrop relay (see oablab/cfdrop-app).
