@@ -40,6 +40,8 @@ a { color:var(--blue); }
           overflow-x:auto; margin-bottom:12px;
           font:.8rem/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; }
 .md pre code { background:none; border:0; padding:0; color:var(--fg); font-size:1em; }
+.md pre.mermaid { background:var(--card); text-align:center; font:inherit; }
+.md pre.mermaid svg { max-width:100%; height:auto; }
 .md blockquote { border-left:3px solid var(--orange); padding:4px 12px; color:var(--dim);
                  margin-bottom:12px; background:var(--card); border-radius:0 8px 8px 0; }
 .md .tablewrap { overflow-x:auto; margin-bottom:12px; border:1px solid var(--line); border-radius:10px; }
@@ -117,9 +119,15 @@ pub fn md_to_html(md: &str) -> String {
             }
             Event::End(TagEnd::CodeBlock) if code_block.is_some() => {
                 let (lang, code) = code_block.take().unwrap();
-                let block = highlight(&code, &lang).unwrap_or_else(|| {
-                    format!("<pre><code>{}</code></pre>", escape(&code))
-                });
+                let block = if lang == "mermaid" {
+                    // Rendered client-side by the bundled mermaid.js; textContent
+                    // is decoded by the browser, so escaping is safe here.
+                    format!(r#"<pre class="mermaid">{}</pre>"#, escape(&code))
+                } else {
+                    highlight(&code, &lang).unwrap_or_else(|| {
+                        format!("<pre><code>{}</code></pre>", escape(&code))
+                    })
+                };
                 events.push(Event::Html(block.into()));
             }
             other => events.push(other),
@@ -140,9 +148,17 @@ pub fn title_of(md: &str, fallback: &str) -> String {
         .unwrap_or_else(|| fallback.to_string())
 }
 
+const MERMAID_JS: &str = include_str!("vendor/mermaid.min.js");
+const MERMAID_MARKER: &str = r#"<pre class="mermaid">"#;
+
 fn render_page(title: &str, body: &str, with_back: bool) -> String {
     let back = if with_back {
         r#"<a class="back" href="/">← Index</a>"#
+    } else {
+        ""
+    };
+    let mermaid = if body.contains(MERMAID_MARKER) {
+        r#"<script src="/_cftmp/mermaid.min.js"></script><script>mermaid.initialize({startOnLoad:true,theme:"dark"});</script>"#
     } else {
         ""
     };
@@ -151,7 +167,7 @@ fn render_page(title: &str, body: &str, with_back: bool) -> String {
 <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
 <title>{}</title><style>{CSS}</style></head><body>{back}\
 <div class=\"md\">{body}</div>\
-<footer>deployed with cftmp</footer></body></html>",
+<footer>deployed with cftmp</footer>{mermaid}</body></html>",
         escape(title)
     )
 }
@@ -174,6 +190,7 @@ pub fn stage_directory(src: &Path) -> Result<PathBuf> {
     // (href, title) of every page, for the auto-index
     let mut pages: Vec<(String, String)> = Vec::new();
     let mut have_index = false;
+    let mut needs_mermaid = false;
 
     for item in WalkDir::new(src).follow_links(false) {
         let item = item.context("walking source directory")?;
@@ -210,7 +227,11 @@ pub fn stage_directory(src: &Path) -> Result<PathBuf> {
             let title = title_of(&raw, &stem);
             let rel_str = out_rel.to_string_lossy().replace('\\', "/");
             let is_index = rel_str == "index.html";
-            let page = render_page(&title, &md_to_html(&raw), !is_index);
+            let body_html = md_to_html(&raw);
+            if body_html.contains(MERMAID_MARKER) {
+                needs_mermaid = true;
+            }
+            let page = render_page(&title, &body_html, !is_index);
             fs::write(&out_path, page)?;
             if is_index {
                 have_index = true;
@@ -226,6 +247,13 @@ pub fn stage_directory(src: &Path) -> Result<PathBuf> {
             fs::copy(item.path(), &out_path)
                 .with_context(|| format!("copying {}", item.path().display()))?;
         }
+    }
+
+    if needs_mermaid {
+        let vendor_dir = dest.join("_cftmp");
+        fs::create_dir_all(&vendor_dir)?;
+        fs::write(vendor_dir.join("mermaid.min.js"), MERMAID_JS)
+            .context("writing bundled mermaid.min.js")?;
     }
 
     if pages.is_empty() && !have_index {
@@ -287,6 +315,46 @@ mod tests {
         let out = md_to_html("```\na < b\n```\n");
         assert!(out.contains("a &lt; b"));
         assert!(!out.contains("<span style=\"color:"));
+    }
+
+    #[test]
+    fn mermaid_fence_becomes_mermaid_pre() {
+        let out = md_to_html("```mermaid\ngraph TD\n  A --> B\n```\n");
+        assert!(out.contains(r#"<pre class="mermaid">graph TD"#));
+        assert!(out.contains("A --&gt; B")); // escaped; browser decodes textContent
+        assert!(!out.contains("<span style=\"color:"));
+    }
+
+    #[test]
+    fn mermaid_asset_and_script_only_when_used() {
+        let src = std::env::temp_dir().join(format!("cftmp-md-src-mm-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&src);
+        fs::create_dir_all(&src).unwrap();
+        fs::write(src.join("diagram.md"), "# D\n\n```mermaid\ngraph TD\nA-->B\n```\n").unwrap();
+        fs::write(src.join("plain.md"), "# P\n\ntext only").unwrap();
+
+        let dest = stage_directory(&src).unwrap();
+        assert!(dest.join("_cftmp/mermaid.min.js").is_file());
+        let diagram = fs::read_to_string(dest.join("diagram.html")).unwrap();
+        assert!(diagram.contains(r#"src="/_cftmp/mermaid.min.js""#));
+        assert!(diagram.contains("mermaid.initialize"));
+        let plain = fs::read_to_string(dest.join("plain.html")).unwrap();
+        assert!(!plain.contains("mermaid.min.js"));
+
+        let _ = fs::remove_dir_all(&src);
+        let _ = fs::remove_dir_all(&dest);
+    }
+
+    #[test]
+    fn no_mermaid_asset_when_unused() {
+        let src = std::env::temp_dir().join(format!("cftmp-md-src-nomm-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&src);
+        fs::create_dir_all(&src).unwrap();
+        fs::write(src.join("a.md"), "# A\n\nplain").unwrap();
+        let dest = stage_directory(&src).unwrap();
+        assert!(!dest.join("_cftmp").exists());
+        let _ = fs::remove_dir_all(&src);
+        let _ = fs::remove_dir_all(&dest);
     }
 
     #[test]
