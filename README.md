@@ -59,34 +59,38 @@ export CLOUDFLARE_API_TOKEN=...          # from a file or your secret manager; n
 cfdrop deploy -d ./site -n docs --own    # → https://docs.<your-subdomain>.workers.dev
 ```
 
-No expiry, no claim URL, and the Worker shows up in your dashboard like any other.
+No expiry, no claim URL, and the Worker shows up in your dashboard like any other. The only
+prerequisite is an account API token with the `Workers Scripts: Edit` permission (next section).
 
 ### 1. Create the API token
 
-One permission is enough. In the Cloudflare dashboard → **My Profile → API Tokens →
-Create Token → Custom Token**:
+All `--own` needs is a **Cloudflare Account API Token with one permission: Workers
+Scripts · Edit**. Nothing else.
+
+Create it at **`https://dash.cloudflare.com/YOUR_CF_ACCOUNT_ID/api-tokens`** (Account →
+Manage Account → API Tokens → Create Token → Custom Token):
 
 | Field | Value |
 |---|---|
 | Permissions | `Account` · `Workers Scripts` · `Edit` — that is the whole list |
-| Account Resources | `Include` · `Specific account` · the account you deploy into |
 | Zone Resources | leave empty (cfdrop never touches zones) |
 | TTL | give it an end date; rotate rather than keep one forever |
 
 Do **not** use the "Edit Cloudflare Workers" template — it adds zone routes, account
 settings and user-details permissions cfdrop does not need. Do not use the Global API Key.
 
-**User token or Account token?** Both work. A *User* token (Profile → API Tokens) is tied to
-you and can span several accounts you belong to; an *Account* token (Account → Manage
-Account → API Tokens) belongs to the account, survives membership changes, and is the better
-fit for CI. cfdrop's preflight only calls endpoints that accept both (`GET /accounts`,
-`GET /accounts/{id}/workers/subdomain`) — it deliberately never calls `/user/*`, where
-account tokens answer `Invalid API Token` even when perfectly valid.
+Why an *account* token rather than one from your profile: it belongs to the account, not to
+you, so it keeps working when memberships change (right for CI), and it is scoped to that one
+account by construction — there is no "Account Resources" step to get wrong. A *User* API
+token (Profile → API Tokens) with the same single permission works too, if you scope its
+Account Resources to the target account. cfdrop's preflight only calls endpoints that accept
+both kinds (`GET /accounts`, `GET /accounts/{id}/workers/subdomain`); it never calls
+`/user/*`, where account tokens answer `Invalid API Token` even when perfectly valid.
 
 Check the token before the first deploy (values stay in your shell):
 
 ```bash
-# who am I → should list exactly the account you scoped it to
+# who am I → should list exactly the account you created it in
 curl -s -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
   https://api.cloudflare.com/client/v4/accounts | jq '.result[] | {id, name}'
 
@@ -97,7 +101,8 @@ curl -s -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
 ```
 
 If the second call answers `{"code":10000,"message":"Authentication error"}` the token is
-alive but missing `Workers Scripts: Edit` — the most common mistake.
+alive but missing `Workers Scripts: Edit` — the most common mistake. (Do not test with
+`/user/tokens/verify`: an account token fails there by design.)
 
 ### 2. Pick the account
 
@@ -146,8 +151,8 @@ automatically). If it does not, the deploy stops with the exact `PUT` to registe
     ./cfdrop deploy -d ./public -n docs
 ```
 
-An account-owned token is the natural choice here: it does not stop working when the person
-who created it leaves the account.
+Use the account token from step 1 as the secret: it does not stop working when the person
+who created it leaves the account, and it cannot reach anything but Workers in that one account.
 
 ### Troubleshooting
 
