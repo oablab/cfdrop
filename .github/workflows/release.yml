@@ -58,6 +58,8 @@ jobs:
   macos:
     needs: create-release
     runs-on: oablab-macos
+    # A wedged self-hosted runner otherwise hangs until GitHub's 6-hour cap; fail loudly instead.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - name: Test, build, upload (curl — no gh CLI on this runner)
