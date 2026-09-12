@@ -64,7 +64,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          export PATH="$HOME/.cargo/bin:$PATH"
+          # cargo comes from the runner's own PATH (internal-disk toolchain).
+          # Do NOT prepend $HOME/.cargo/bin: on macmini that is a symlink onto
+          # an external volume, which launchd-spawned processes cannot open
+          # (TCC) — the worker hangs forever in opendir() during the PATH walk.
+          cargo --version
           cargo test
           cargo build --release
           tar -czf cfdrop-macos-arm64.tar.gz -C target/release cfdrop
