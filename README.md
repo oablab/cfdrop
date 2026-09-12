@@ -35,8 +35,10 @@ The temporary account is cached in the OS config dir (`~/Library/Application Sup
 
 | Command | Description |
 |---------|-------------|
-| `cfdrop deploy -d <dir> [-n name] [-y] [--fresh] [--auth user:pass] [--md]` | Bundle and deploy a directory |
-| `cfdrop status` | Show cached temp account, claim URL, expiry |
+| `cfdrop deploy -d <dir> [-n name] [-y] [--fresh] [--auth user:pass] [--md]` | Bundle and deploy a directory to a temporary account |
+| `cfdrop deploy -d <dir> -n name --own [--account <id>] [--force]` | Deploy into **your own** Cloudflare account (see below) |
+| `cfdrop rm -n name [--account <id>] [--force]` | Delete a site from your own account |
+| `cfdrop status` | Show cached temp account, claim URL, expiry; whether own-account env is set |
 | `cfdrop logout` | Forget the cached temp account |
 
 - `-y` accepts Cloudflare's Terms of Service / Privacy Policy without prompting (required for non-interactive use)
@@ -44,6 +46,37 @@ The temporary account is cached in the OS config dir (`~/Library/Application Sup
 - `--auth user:pass` protects the site with HTTP Basic Auth: deploys a small guard Worker in front of the assets (`run_worker_first`) that returns 401 unless the browser sends the matching credential. Note the credential is baked into the Worker script — fine for a 60-minute preview, not a real security boundary. For long-lived sites, claim the account and use [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/policies/access/) instead (not available on temporary accounts).
 - `--md` treats the directory as Markdown: every `*.md` is converted (pulldown-cmark: tables, strikethrough, footnotes, task lists) into a dark-theme, mobile-first HTML page — vertical scrolling only, wide tables scroll inside their own block. Non-markdown files are copied through. Unless an `index.md`/`index.html` exists, an index page listing all pages as tappable cards is generated. Titles come from the first `# heading`.
 - Worker name defaults to the sanitized directory name
+
+## Deploy into your own account (`--own`)
+
+Cloudflare Drop itself is anonymous-first: deploy to a throwaway account, then *claim* it.
+When you already know the site belongs in your account, skip the claim step:
+
+```bash
+export CLOUDFLARE_API_TOKEN=...      # never passed on the command line
+cfdrop deploy -d ./site -n docs --own              # account inferred from the token
+cfdrop deploy -d ./site -n docs --account <id>     # or pick one explicitly
+CLOUDFLARE_ACCOUNT_ID=<id> cfdrop deploy -d ./site -n docs
+cfdrop rm -n docs                                  # own-account sites do not expire
+```
+
+- **Own mode is explicit.** `--own`, `--account`, or `CLOUDFLARE_ACCOUNT_ID` switch it on.
+  A bare `CLOUDFLARE_API_TOKEN` in the environment (common for wrangler users) does *not*,
+  so a preview cannot land in a real account by accident. `--temporary` forces the default
+  even when `CLOUDFLARE_ACCOUNT_ID` is set. If own mode is requested but no token is found,
+  cfdrop errors rather than silently falling back.
+- **Token**: `CLOUDFLARE_API_TOKEN` or `--token-file <path>`. Needs exactly one permission,
+  `Account · Workers Scripts · Edit`, scoped to the target account. Both user tokens and
+  account-owned tokens work — the preflight uses `GET /accounts` and
+  `GET /accounts/{id}/workers/subdomain`, never `/user/*` (account tokens answer
+  "Invalid API Token" there).
+- **Account**: inferred when the token sees exactly one; otherwise pass `--account`.
+- **Never clobbers your other Workers.** Every cfdrop deploy is tagged `cfdrop`; a `--name`
+  that collides with an existing Worker *without* that tag is refused unless you pass
+  `--force`. Same rule for `cfdrop rm`.
+- Your account must have a workers.dev subdomain registered (temp accounts get one
+  automatically); the error tells you how if not.
+- `--auth` still works but prints a warning — for a long-lived site use Cloudflare Access.
 
 ## `--md` on a phone
 

@@ -39,6 +39,14 @@ return a live `workers.dev` URL. Sites live ~60 minutes unless claimed.
      diagram / analysis / suggested action — adapt sections to the subject)
 3. **Deploy:** `cfdrop deploy --directory /tmp/<slug>-site --name <slug> -y`
    - Add `--auth user:pass` if the user wants the site gated (HTTP Basic Auth)
+   - **Own account instead of a temporary one (≥0.7.0):** add `--own` (or `--account <id>`,
+     or export `CLOUDFLARE_ACCOUNT_ID`) with `CLOUDFLARE_API_TOKEN` in the env — no 60-minute
+     expiry, no claim URL; the site lives at `https://<name>.<subdomain>.workers.dev` on the
+     user's own account. Token needs only `Account · Workers Scripts · Edit`; user tokens and
+     account tokens both work. A `--name` that collides with a Worker cfdrop did not create is
+     refused (pass `--force` to overwrite). `cfdrop rm -n <name>` deletes an own-account site.
+     A bare `CLOUDFLARE_API_TOKEN` without `--own`/account id still deploys to a temporary
+     account — own mode is always explicit. `~/.env` on the laptop carries a suitable token.
    - `-y` is required non-interactively (accepts Cloudflare ToS)
 4. **Verify:** curl the index and one detail page, expect 200. An immediate curl can hit
    a stale edge cache — append `?v=N` or retry once before concluding failure.
@@ -128,7 +136,7 @@ return a live `workers.dev` URL. Sites live ~60 minutes unless claimed.
 
 - Binary: `cfdrop` on PATH (release binaries for linux-amd64/arm64 + macos-arm64 on
   this repo's GitHub releases). Feature floor: `--md` needs ≥0.2.0, syntax
-  highlighting ≥0.3.0, mermaid ≥0.4.0 — check `cfdrop --version` if a feature seems
+  highlighting ≥0.3.0, mermaid ≥0.4.0, own-account `--own` ≥0.7.0 — check `cfdrop --version` if a feature seems
   missing.
 - `cfdrop status` — cached temp account, expiry, claim URL; `cfdrop logout` — forget it;
   `--fresh` — force a new account

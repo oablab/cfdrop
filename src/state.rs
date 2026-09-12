@@ -8,6 +8,15 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
+/// What every Cloudflare API call actually needs: an account and a bearer
+/// token. Both deploy targets (temporary preview account, user's own account)
+/// reduce to this, so `cf.rs` never has to know which one it is talking to.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Credentials {
+    pub account_id: String,
+    pub api_token: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TempAccount {
     pub account_id: String,
@@ -19,6 +28,13 @@ pub struct TempAccount {
 }
 
 impl TempAccount {
+    pub fn creds(&self) -> Credentials {
+        Credentials {
+            account_id: self.account_id.clone(),
+            api_token: self.api_token.clone(),
+        }
+    }
+
     /// Usable if both the account credentials and the claim window are still
     /// valid, with a safety margin so we do not deploy into an account that
     /// expires mid-upload.
