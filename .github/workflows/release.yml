@@ -58,13 +58,19 @@ jobs:
   macos:
     needs: create-release
     runs-on: oablab-macos
+    # A wedged self-hosted runner otherwise hangs until GitHub's 6-hour cap; fail loudly instead.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - name: Test, build, upload (curl — no gh CLI on this runner)
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          export PATH="$HOME/.cargo/bin:$PATH"
+          # cargo comes from the runner's own PATH (internal-disk toolchain).
+          # Do NOT prepend $HOME/.cargo/bin: on macmini that is a symlink onto
+          # an external volume, which launchd-spawned processes cannot open
+          # (TCC) — the worker hangs forever in opendir() during the PATH walk.
+          cargo --version
           cargo test
           cargo build --release
           tar -czf cfdrop-macos-arm64.tar.gz -C target/release cfdrop
