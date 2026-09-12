@@ -1,6 +1,6 @@
 # cfdrop
 
-Deploy a directory to a **temporary Cloudflare account** — no signup, no wrangler, no Node — and get a live `workers.dev` URL for browsing. Self-contained Rust CLI.
+Deploy a directory to a **temporary Cloudflare account** — no signup, no wrangler, no Node — and get a live `workers.dev` URL for browsing. Or, with `--own`, [deploy straight into your own account](#deploy-into-your-own-account---own) with a single-permission API token. Self-contained Rust CLI.
 
 ```
 cfdrop deploy --directory path/to/dir/
@@ -49,34 +49,127 @@ The temporary account is cached in the OS config dir (`~/Library/Application Sup
 
 ## Deploy into your own account (`--own`)
 
-Cloudflare Drop itself is anonymous-first: deploy to a throwaway account, then *claim* it.
-When you already know the site belongs in your account, skip the claim step:
+Cloudflare Drop itself is anonymous-first: deploy to a throwaway account, then *claim* it
+within 60 minutes if you want to keep it. When you already know the site belongs in your
+account — a docs site, an internal dashboard, anything that should outlive the hour — skip
+the claim step and deploy straight into it:
 
 ```bash
-export CLOUDFLARE_API_TOKEN=...      # never passed on the command line
-cfdrop deploy -d ./site -n docs --own              # account inferred from the token
-cfdrop deploy -d ./site -n docs --account <id>     # or pick one explicitly
-CLOUDFLARE_ACCOUNT_ID=<id> cfdrop deploy -d ./site -n docs
-cfdrop rm -n docs                                  # own-account sites do not expire
+export CLOUDFLARE_API_TOKEN=...          # from a file or your secret manager; never on argv
+cfdrop deploy -d ./site -n docs --own    # → https://docs.<your-subdomain>.workers.dev
 ```
 
-- **Own mode is explicit.** `--own`, `--account`, or `CLOUDFLARE_ACCOUNT_ID` switch it on.
-  A bare `CLOUDFLARE_API_TOKEN` in the environment (common for wrangler users) does *not*,
-  so a preview cannot land in a real account by accident. `--temporary` forces the default
-  even when `CLOUDFLARE_ACCOUNT_ID` is set. If own mode is requested but no token is found,
-  cfdrop errors rather than silently falling back.
-- **Token**: `CLOUDFLARE_API_TOKEN` or `--token-file <path>`. Needs exactly one permission,
-  `Account · Workers Scripts · Edit`, scoped to the target account. Both user tokens and
-  account-owned tokens work — the preflight uses `GET /accounts` and
-  `GET /accounts/{id}/workers/subdomain`, never `/user/*` (account tokens answer
-  "Invalid API Token" there).
-- **Account**: inferred when the token sees exactly one; otherwise pass `--account`.
-- **Never clobbers your other Workers.** Every cfdrop deploy is tagged `cfdrop`; a `--name`
-  that collides with an existing Worker *without* that tag is refused unless you pass
-  `--force`. Same rule for `cfdrop rm`.
-- Your account must have a workers.dev subdomain registered (temp accounts get one
-  automatically); the error tells you how if not.
-- `--auth` still works but prints a warning — for a long-lived site use Cloudflare Access.
+No expiry, no claim URL, and the Worker shows up in your dashboard like any other. The only
+prerequisite is an account API token with the `Workers Scripts: Edit` permission (next section).
+
+### 1. Create the API token
+
+All `--own` needs is a **Cloudflare Account API Token with one permission: Workers
+Scripts · Edit**. Nothing else.
+
+Create it at **`https://dash.cloudflare.com/YOUR_CF_ACCOUNT_ID/api-tokens`** (Account →
+Manage Account → API Tokens → Create Token → Custom Token):
+
+| Field | Value |
+|---|---|
+| Permissions | `Account` · `Workers Scripts` · `Edit` — that is the whole list |
+| Zone Resources | leave empty (cfdrop never touches zones) |
+| TTL | give it an end date; rotate rather than keep one forever |
+
+Do **not** use the "Edit Cloudflare Workers" template — it adds zone routes, account
+settings and user-details permissions cfdrop does not need. Do not use the Global API Key.
+
+Why an *account* token rather than one from your profile: it belongs to the account, not to
+you, so it keeps working when memberships change (right for CI), and it is scoped to that one
+account by construction — there is no "Account Resources" step to get wrong. A *User* API
+token (Profile → API Tokens) with the same single permission works too, if you scope its
+Account Resources to the target account. cfdrop's preflight only calls endpoints that accept
+both kinds (`GET /accounts`, `GET /accounts/{id}/workers/subdomain`); it never calls
+`/user/*`, where account tokens answer `Invalid API Token` even when perfectly valid.
+
+Check the token before the first deploy (values stay in your shell):
+
+```bash
+# who am I → should list exactly the account you created it in
+curl -s -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+  https://api.cloudflare.com/client/v4/accounts | jq '.result[] | {id, name}'
+
+# can I see Workers? → success:true and your workers.dev subdomain
+ACC=<account id from above>
+curl -s -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+  https://api.cloudflare.com/client/v4/accounts/$ACC/workers/subdomain | jq
+```
+
+If the second call answers `{"code":10000,"message":"Authentication error"}` the token is
+alive but missing `Workers Scripts: Edit` — the most common mistake. (Do not test with
+`/user/tokens/verify`: an account token fails there by design.)
+
+### 2. Pick the account
+
+| You have | Do |
+|---|---|
+| A token that sees exactly one account | `cfdrop deploy -d ./site -n docs --own` — the account is inferred |
+| A token that sees several accounts | `cfdrop deploy -d ./site -n docs --account <id>` |
+| A fixed target for every deploy | `export CLOUDFLARE_ACCOUNT_ID=<id>` — then plain `cfdrop deploy -d ./site -n docs` goes to your account |
+| Token in a file rather than the env | add `--token-file ~/.config/cloudflare/cfdrop.token` |
+
+The account id is the 32-hex string in dashboard URLs (`dash.cloudflare.com/<account id>/…`)
+and in the `GET /accounts` output above.
+
+**Own mode is always explicit.** `--own`, `--account`, or `CLOUDFLARE_ACCOUNT_ID` switch it
+on. A bare `CLOUDFLARE_API_TOKEN` in the environment — which many shells carry for wrangler —
+does *not*, so a throwaway preview cannot land in a real account by accident. `--temporary`
+forces the default even with `CLOUDFLARE_ACCOUNT_ID` set. If own mode is requested but no
+token can be found, cfdrop stops with an error; it never falls back to a temporary account.
+
+### 3. Deploy, update, delete
+
+```bash
+cfdrop deploy -d ./site -n docs --own          # first deploy
+cfdrop deploy -d ./site -n docs --own          # same name = update in place, same URL
+cfdrop rm -n docs                              # delete the Worker (own account only)
+```
+
+Every cfdrop deploy tags its Worker `cfdrop`. A `--name` that collides with an existing
+Worker **without** that tag is refused — a typo cannot overwrite the API you hand-wrote last
+year. `--force` overrides, for both `deploy` and `rm`. Temporary-account sites never need
+`rm`; they expire on their own.
+
+Your account must already have a workers.dev subdomain (temporary accounts get one
+automatically). If it does not, the deploy stops with the exact `PUT` to register one.
+
+### 4. From CI
+
+```yaml
+# .github/workflows/docs.yml
+- name: Deploy docs to Cloudflare
+  env:
+    CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}   # Workers Scripts: Edit only
+    CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+  run: |
+    curl -sL https://github.com/oablab/cfdrop/releases/latest/download/cfdrop-linux-amd64.tar.gz | tar xz
+    ./cfdrop deploy -d ./public -n docs
+```
+
+Use the account token from step 1 as the secret: it does not stop working when the person
+who created it leaves the account, and it cannot reach anything but Workers in that one account.
+
+### Troubleshooting
+
+| Message | Cause | Fix |
+|---|---|---|
+| `Cloudflare rejected the API token` | token revoked, mistyped, or pasted with a trailing character | recreate; check `curl …/accounts` as above |
+| `needs the Workers Scripts: Edit permission` | token exists but the permission group is missing | edit the token, add `Account · Workers Scripts · Edit` |
+| `the token can see N accounts; pick one with --account` | user token spans several accounts | `--account <id>` or `CLOUDFLARE_ACCOUNT_ID` |
+| `the token has no access to account X` | `--account` names an account outside the token's scope | fix the id, or widen Account Resources on the token |
+| `already exists … and was not deployed by cfdrop` | `--name` collides with a Worker you made elsewhere | choose another name, or `--force` if you really mean it |
+| `no workers.dev subdomain registered` | fresh account, subdomain never chosen | register once (dashboard or the printed `PUT`) |
+| `Invalid API Token` from `/user/tokens/verify` in your own scripts | it is an account-owned token | use `GET /accounts/{id}/tokens/verify` instead; cfdrop already does |
+
+`--auth user:pass` still works in own mode but prints a warning: the credential is baked into
+the Worker script, which is fine for an hour-long preview and wrong for a permanent site. Put
+[Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/policies/access/) in
+front of the workers.dev hostname instead.
 
 ## `--md` on a phone
 
